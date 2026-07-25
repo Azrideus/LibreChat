@@ -49,8 +49,12 @@ import {
   HOST_FILE_AUTHORING_ARTIFACT_KEY,
   isCodeSessionToolName,
 } from './tools';
+import {
+  ContentFilterError,
+  contentFilterModelBoundBlockResponse,
+  isContentFilterError,
+} from '~/middleware/contentFilter';
 import { getSafeErrorMetadata, logAxiosError, runOutsideTracing, truncateMiddle } from '~/utils';
-import { contentFilterBlockResponse, isContentFilterError } from '~/middleware/contentFilter';
 import { buildSkillPrimeMessage, SKILL_FILE_PREFIX } from './skills';
 import { parseFrontmatter } from '../skills/import';
 import { cleanCodeToolOutput } from './cleanup';
@@ -604,6 +608,19 @@ function errorResult(tc: ToolCallRequest, errorMessage: string): ToolExecuteResu
   };
 }
 
+function modelBoundContentFilterErrorMessage(
+  finding: Parameters<typeof contentFilterModelBoundBlockResponse>[0],
+): string {
+  return JSON.stringify(contentFilterModelBoundBlockResponse(finding));
+}
+
+function contentFilterErrorResult(
+  tc: ToolCallRequest,
+  finding: Parameters<typeof contentFilterModelBoundBlockResponse>[0],
+): ToolExecuteResult {
+  return errorResult(tc, modelBoundContentFilterErrorMessage(finding));
+}
+
 function filteredContentResult(
   tc: ToolCallRequest,
   req: ServerRequest | undefined,
@@ -614,7 +631,7 @@ function filteredContentResult(
     return null;
   }
   const finding = inspectContent(fragments, { filters });
-  return finding == null ? null : errorResult(tc, contentFilterBlockResponse(finding).message);
+  return finding == null ? null : contentFilterErrorResult(tc, finding);
 }
 
 function filteredToolArgumentsResult(
@@ -3661,7 +3678,9 @@ async function handleSkillToolCall(
       }
     } catch (error) {
       if (isContentFilterError(error)) {
-        return errorResult(tc, error.body.message);
+        return error instanceof ContentFilterError
+          ? errorResult(tc, modelBoundContentFilterErrorMessage(error.body))
+          : errorResult(tc, error.body.message);
       }
       logger.error(
         `[handleSkillToolCall] Failed to prime files for skill "${args.skillName}":`,
@@ -4028,7 +4047,9 @@ export function createToolExecuteHandler(options: ToolExecuteOptions): EventHand
                           backgroundUserId,
                           backgroundConversationId,
                           task.id,
-                          persistError.body.message,
+                          persistError instanceof ContentFilterError
+                            ? modelBoundContentFilterErrorMessage(persistError.body)
+                            : persistError.body.message,
                         );
                         logger.warn(
                           `[background] Generated code output for task ${task.id} was blocked by content policy.`,
@@ -4071,8 +4092,11 @@ export function createToolExecuteHandler(options: ToolExecuteOptions): EventHand
                       artifact: result.artifact,
                     });
                     if (filteredOutput != null) {
-                      const errorOutput =
+                      const policyError =
                         filteredOutput.errorMessage ?? 'Submitted content was blocked.';
+                      const errorOutput = isCodeCall
+                        ? toCodeToolFailure(tc.name, policyError)
+                        : policyError;
                       backgroundTaskRegistry.fail(
                         backgroundUserId,
                         backgroundConversationId,
@@ -4101,12 +4125,24 @@ export function createToolExecuteHandler(options: ToolExecuteOptions): EventHand
                       artifact: result.artifact,
                     });
                   } catch (toolError) {
+                    const policyError =
+                      toolError instanceof ContentFilterError
+                        ? modelBoundContentFilterErrorMessage(toolError.body)
+                        : null;
                     const { message } = getSafeToolError(toolError);
-                    const errorOutput = isCodeCall ? toCodeToolFailure(tc.name, message) : message;
-                    const filteredError = filteredToolOutputResult(tc, backgroundReq, {
-                      errorMessage: errorOutput,
-                    });
-                    const deliveredError = filteredError?.errorMessage ?? errorOutput;
+                    const errorOutput =
+                      policyError ?? (isCodeCall ? toCodeToolFailure(tc.name, message) : message);
+                    const filteredError =
+                      policyError == null
+                        ? filteredToolOutputResult(tc, backgroundReq, {
+                            errorMessage: errorOutput,
+                          })
+                        : null;
+                    const neutralizedError = filteredError?.errorMessage ?? errorOutput;
+                    const deliveredError =
+                      isCodeCall && (policyError != null || filteredError != null)
+                        ? toCodeToolFailure(tc.name, neutralizedError)
+                        : neutralizedError;
                     backgroundTaskRegistry.fail(
                       backgroundUserId,
                       backgroundConversationId,
@@ -4232,7 +4268,9 @@ export function createToolExecuteHandler(options: ToolExecuteOptions): EventHand
                             backgroundUserId,
                             backgroundConversationId,
                             pending.taskId,
-                            callbackError.body.message,
+                            callbackError instanceof ContentFilterError
+                              ? modelBoundContentFilterErrorMessage(callbackError.body)
+                              : callbackError.body.message,
                           );
                           logger.warn(
                             `[background] Artifact delivery for task ${pending.taskId} was blocked by content policy.`,
@@ -4424,6 +4462,13 @@ export function createToolExecuteHandler(options: ToolExecuteOptions): EventHand
                         handlerResult = errorResult(tc, `Tool ${tc.name} not found`);
                       }
                     } catch (toolError) {
+                      if (toolError instanceof ContentFilterError) {
+                        logger.error(`[ON_TOOL_EXECUTE] Tool ${tc.name} error`, {
+                          name: toolError.name,
+                          contentFiltered: true,
+                        });
+                        return errorResult(tc, modelBoundContentFilterErrorMessage(toolError.body));
+                      }
                       const { message, logContext } = getSafeToolError(toolError);
                       const filteredError = filteredToolOutputResult(tc, req, {
                         errorMessage: message,
@@ -4456,34 +4501,47 @@ export function createToolExecuteHandler(options: ToolExecuteOptions): EventHand
                       return filteredOutput;
                     }
 
+                    if (toolEndCallback && handlerResult.artifact) {
+                      try {
+                        await toolEndCallback(
+                          {
+                            output: {
+                              name: tc.name,
+                              tool_call_id: tc.id,
+                              content: handlerResult.content,
+                              artifact: handlerResult.artifact,
+                            },
+                          },
+                          {
+                            run_id: (metadata as Record<string, unknown>)?.run_id as
+                              | string
+                              | undefined,
+                            thread_id: (metadata as Record<string, unknown>)?.thread_id as
+                              | string
+                              | undefined,
+                            ...metadata,
+                          },
+                        );
+                      } catch (callbackError) {
+                        if (callbackError instanceof ContentFilterError) {
+                          logger.warn(
+                            `[ON_TOOL_EXECUTE] Artifact delivery for tool ${tc.name} was blocked by content policy.`,
+                          );
+                          return errorResult(
+                            tc,
+                            modelBoundContentFilterErrorMessage(callbackError.body),
+                          );
+                        }
+                        throw callbackError;
+                      }
+                    }
+
                     if (
                       isSandboxFileAuthoringCall &&
                       handlerResult.status === 'success' &&
                       sandboxContext
                     ) {
                       mergeSandboxSessionArtifact(sandboxContext, handlerResult.artifact);
-                    }
-
-                    if (toolEndCallback && handlerResult.artifact) {
-                      await toolEndCallback(
-                        {
-                          output: {
-                            name: tc.name,
-                            tool_call_id: tc.id,
-                            content: handlerResult.content,
-                            artifact: handlerResult.artifact,
-                          },
-                        },
-                        {
-                          run_id: (metadata as Record<string, unknown>)?.run_id as
-                            | string
-                            | undefined,
-                          thread_id: (metadata as Record<string, unknown>)?.thread_id as
-                            | string
-                            | undefined,
-                          ...metadata,
-                        },
-                      );
                     }
 
                     /* Sandbox-routed create_file/edit_file return before the
@@ -4652,6 +4710,13 @@ export function createToolExecuteHandler(options: ToolExecuteOptions): EventHand
                       status: 'success' as const,
                     };
                   } catch (toolError) {
+                    if (toolError instanceof ContentFilterError) {
+                      logger.error(`[ON_TOOL_EXECUTE] Tool ${tc.name} error`, {
+                        name: toolError.name,
+                        contentFiltered: true,
+                      });
+                      return errorResult(tc, modelBoundContentFilterErrorMessage(toolError.body));
+                    }
                     const { message, logContext } = getSafeToolError(toolError);
                     const req = mergedConfigurable?.req as ServerRequest | undefined;
                     const filteredError = filteredToolOutputResult(tc, req, {
