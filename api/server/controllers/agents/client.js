@@ -240,6 +240,8 @@ class AgentClient extends BaseClient {
 
     /** @deprecated @type {true} - Is a Chat Completion Request */
     this.isChatCompletion = true;
+    /** @type {number | undefined} */
+    this.jobCreatedAt = options.jobCreatedAt;
 
     /** @type {AgentRun} */
     this.run;
@@ -553,6 +555,27 @@ class AgentClient extends BaseClient {
       agent: normalizeInstructions(agent),
       agentId: agent.id,
     }));
+    const configuredContextAttachments = this.options.agentContextAttachmentsByAgentId;
+    const contextAttachments =
+      configuredContextAttachments instanceof Map
+        ? new Map(configuredContextAttachments)
+        : new Map(Object.entries(configuredContextAttachments ?? {}));
+    for (const { agent, agentId } of allAgents) {
+      if (
+        !contextAttachments.has(agentId) &&
+        Array.isArray(agent.agentContextAttachments) &&
+        agent.agentContextAttachments.length > 0
+      ) {
+        contextAttachments.set(agentId, agent.agentContextAttachments);
+      }
+    }
+    for (const attachments of contextAttachments.values()) {
+      for (const attachment of attachments ?? []) {
+        if (attachment) {
+          modelBoundFileContexts.add(attachment);
+        }
+      }
+    }
     const dynamicToolContexts = getDynamicToolContexts(allAgents.map(({ agent }) => agent));
     for (const context of dynamicToolContexts) {
       modelBoundFileContexts.add(context);
@@ -579,7 +602,37 @@ class AgentClient extends BaseClient {
           ? []
           : Array.from(this.authorizedHistoricalFiles?.values?.() ?? []),
     });
+
+    /**
+     * Memory authorization/loading and MCP config resolution do not depend on
+     * attachment hydration or prompt formatting. Start them before that work,
+     * but keep the existing context-application barrier below.
+     *
+     * Attach a rejection observer immediately because these operations may
+     * settle while request attachments are still being prepared. Awaiting the
+     * original promise later still propagates either error.
+     */
+    const earlySharedContextPromise = Promise.all([
+      this.useMemory(),
+      resolveConfigServers(this.options.req),
+    ]);
+    void earlySharedContextPromise.catch(() => {});
+
     const sharedRunAttachmentIds = new Set();
+    /** @type {ReturnType<typeof buildAgentScopedContext>} */
+    let agentScopedContextPromise;
+    const startAgentScopedContext = () => {
+      const contextPromise = buildAgentScopedContext({
+        agentIds: allAgents.map(({ agentId }) => agentId),
+        attachmentsByAgentId: contextAttachments,
+        sharedRunAttachmentIds,
+        req: this.options.req,
+        tokenCountFn: (text) => countTokens(text),
+      });
+      void contextPromise.catch(() => {});
+      return contextPromise;
+    };
+
     if (this.options.attachments) {
       const attachments = await this.options.attachments;
       const latestMessage = orderedMessages[orderedMessages.length - 1];
@@ -597,6 +650,9 @@ class AgentClient extends BaseClient {
         sharedRunAttachmentIds.add(fileId);
       }
 
+      /** Agent-scoped extraction only depends on the shared attachment IDs. */
+      agentScopedContextPromise = startAgentScopedContext();
+
       if (this.message_file_map) {
         this.message_file_map[latestMessage.messageId] = attachments;
       } else {
@@ -605,10 +661,14 @@ class AgentClient extends BaseClient {
         };
       }
 
-      await this.addFileContextToMessage(latestMessage, attachments);
-      const files = await this.processAttachments(latestMessage, attachments);
+      const [, files] = await Promise.all([
+        this.addFileContextToMessage(latestMessage, attachments),
+        this.processAttachments(latestMessage, attachments),
+      ]);
 
       this.options.attachments = files;
+    } else {
+      agentScopedContextPromise = startAgentScopedContext();
     }
 
     /** Note: Bedrock uses legacy RAG API handling */
@@ -818,20 +878,22 @@ class AgentClient extends BaseClient {
      * Memory context is handled separately and applied per-agent based on config.
      */
     const sharedRunContextParts = [];
+    const [augmentedPrompt, [memories, configServers], agentScopedContext] = await Promise.all([
+      this.contextHandlers?.createContext(),
+      earlySharedContextPromise,
+      agentScopedContextPromise,
+    ]);
 
     /** Augmented prompt from RAG/context handlers */
-    if (this.contextHandlers) {
-      this.augmentedPrompt = await this.contextHandlers.createContext();
-      if (this.augmentedPrompt) {
-        modelBoundFileContexts.add(this.augmentedPrompt);
-        sharedRunContextParts.push(this.augmentedPrompt);
-      }
+    this.augmentedPrompt = augmentedPrompt;
+    if (this.augmentedPrompt) {
+      modelBoundFileContexts.add(this.augmentedPrompt);
+      sharedRunContextParts.push(this.augmentedPrompt);
     }
 
     /** Memory context (user preferences/memories). Keyed context (with memory
      *  keys + token metadata) is reserved for agents that can call
      *  `delete_memory`; everyone else gets the unkeyed values only. */
-    const memories = await this.useMemory();
     /** Partition the loaded memories belong to (the primary agent's). */
     const loadedMemoryAgentId = getMemoryAgentId(this.options.agent);
     const buildMemoryContext = (text) =>
@@ -885,38 +947,6 @@ class AgentClient extends BaseClient {
     const sharedRunContext = sharedRunContextParts.join('\n\n');
     const memoryAgentEnabled = isMemoryAgentEnabled(this.options.req.config?.memory);
 
-    const configuredContextAttachments = this.options.agentContextAttachmentsByAgentId;
-    const contextAttachments =
-      configuredContextAttachments instanceof Map
-        ? new Map(configuredContextAttachments)
-        : new Map(Object.entries(configuredContextAttachments ?? {}));
-    for (const { agent, agentId } of allAgents) {
-      if (
-        !contextAttachments.has(agentId) &&
-        Array.isArray(agent.agentContextAttachments) &&
-        agent.agentContextAttachments.length > 0
-      ) {
-        contextAttachments.set(agentId, agent.agentContextAttachments);
-      }
-    }
-    const attachmentLists =
-      contextAttachments instanceof Map ? [...contextAttachments.values()] : [];
-    for (const attachments of attachmentLists) {
-      for (const attachment of attachments ?? []) {
-        if (attachment) {
-          modelBoundFileContexts.add(attachment);
-        }
-      }
-    }
-
-    const agentScopedContext = await buildAgentScopedContext({
-      agentIds: allAgents.map(({ agentId }) => agentId),
-      attachmentsByAgentId: contextAttachments,
-      sharedRunAttachmentIds,
-      req: this.options.req,
-      tokenCountFn: (text) => countTokens(text),
-    });
-
     /** Preserve prompt token counts for graph formatting and pruning. */
     this.indexTokenCountMap = indexTokenCountMap;
 
@@ -949,8 +979,6 @@ class AgentClient extends BaseClient {
      */
     const ephemeralAgent = this.options.req.body.ephemeralAgent;
     const mcpManager = getMCPManager();
-
-    const configServers = await resolveConfigServers(this.options.req);
 
     await Promise.all(
       allAgents.map(async ({ agent, agentId }) => {
@@ -1705,9 +1733,13 @@ class AgentClient extends BaseClient {
       if (Array.isArray(runMessages) && runMessages.length > 0) {
         const discovered = extractDiscoveredToolsFromHistory(runMessages);
         if (discovered.size > 0) {
-          await GenerationJobManager.updateMetadata(streamId, {
-            discoveredTools: Array.from(discovered),
-          });
+          await GenerationJobManager.updateMetadata(
+            streamId,
+            {
+              discoveredTools: Array.from(discovered),
+            },
+            this.jobCreatedAt,
+          );
         }
       }
     } catch (err) {
@@ -2010,7 +2042,29 @@ class AgentClient extends BaseClient {
         }
 
         const streamId = this.options.req?._resumableStreamId;
-        run = await createRun({
+        // HITL: clear any checkpoint orphaned by a prior paused turn in this
+        // conversation (one that expired or was aborted while paused) so this fresh
+        // turn starts clean instead of rehydrating a stale interrupt — thread_id is
+        // the stable conversationId. No-op when HITL is off or nothing is orphaned.
+        // Deliberately UNCONDITIONAL per HITL turn: any cheaper gate (job metadata,
+        // a Redis flag) can go stale across replicas/restarts and skip the prune
+        // exactly when an orphan exists, while these are two indexed, usually-empty
+        // deleteMany ops — correctness over a micro-optimization.
+        // The gate mirrors createRun's checkpointer condition: the approval policy
+        // OR an ask_user_question-capable agent (which attaches a checkpointer
+        // WITHOUT the approval policy) — an ask pause abandoned via job replacement
+        // or Stop would otherwise rehydrate here and silently duplicate context.
+        //
+        // Start the prune alongside graph construction. The all-settled barrier
+        // below still guarantees it completes before the graph is exposed or run.
+        const shouldPruneCheckpoint =
+          streamId &&
+          (isHITLEnabled(agentsEConfig?.toolApproval) || agents.some(agentRequestsAskUserQuestion));
+        const checkpointPrunePromise = shouldPruneCheckpoint
+          ? deleteAgentCheckpoint(this.conversationId, agentsEConfig?.checkpointer)
+          : Promise.resolve();
+
+        const createRunPromise = createRun({
           agents,
           messages,
           // This controller implements the full HITL pause/resume lifecycle (handleRunInterrupt
@@ -2050,11 +2104,25 @@ class AgentClient extends BaseClient {
             this.collectedUsage,
             this.buildSubagentUsageEmitter(appConfig),
           ),
+        }).then((createdRun) => {
+          if (!createdRun) {
+            throw new Error('Failed to create run');
+          }
+          this.options.startupTelemetry?.mark('run_created');
+          return createdRun;
         });
 
-        if (!run) {
-          throw new Error('Failed to create run');
+        const [createRunResult, checkpointPruneResult] = await Promise.allSettled([
+          createRunPromise,
+          checkpointPrunePromise,
+        ]);
+        if (createRunResult.status === 'rejected') {
+          throw createRunResult.reason;
         }
+        if (checkpointPruneResult.status === 'rejected') {
+          throw checkpointPruneResult.reason;
+        }
+        run = createRunResult.value;
 
         this.run = run;
         if (this._resolveRun) {
@@ -2063,7 +2131,7 @@ class AgentClient extends BaseClient {
         }
 
         if (streamId && run.Graph) {
-          GenerationJobManager.setGraph(streamId, run.Graph);
+          GenerationJobManager.setGraph(streamId, run.Graph, this.jobCreatedAt);
         }
 
         if (userMCPAuthMap != null) {
@@ -2073,25 +2141,7 @@ class AgentClient extends BaseClient {
         /** @deprecated Agent Chain */
         config.configurable.last_agent_id = agents[agents.length - 1].id;
 
-        // HITL: clear any checkpoint orphaned by a prior paused turn in this
-        // conversation (one that expired or was aborted while paused) so this fresh
-        // turn starts clean instead of rehydrating a stale interrupt — thread_id is
-        // the stable conversationId. No-op when HITL is off or nothing is orphaned.
-        // Deliberately UNCONDITIONAL per HITL turn: any cheaper gate (job metadata,
-        // a Redis flag) can go stale across replicas/restarts and skip the prune
-        // exactly when an orphan exists, while these are two indexed, usually-empty
-        // deleteMany ops — correctness over a micro-optimization.
-        // The gate mirrors createRun's checkpointer condition: the approval policy
-        // OR an ask_user_question-capable agent (which attaches a checkpointer
-        // WITHOUT the approval policy) — an ask pause abandoned via job replacement
-        // or Stop would otherwise rehydrate here and silently duplicate context.
-        if (
-          streamId &&
-          (isHITLEnabled(agentsEConfig?.toolApproval) || agents.some(agentRequestsAskUserQuestion))
-        ) {
-          await deleteAgentCheckpoint(this.conversationId, agentsEConfig?.checkpointer);
-        }
-
+        this.options.startupTelemetry?.mark('stream_processing_started');
         await run.processStream({ messages }, config, {
           callbacks: {
             [Callback.TOOL_ERROR]: logToolError,
@@ -2106,6 +2156,7 @@ class AgentClient extends BaseClient {
         config.signal = null;
       };
 
+      this.options.startupTelemetry?.mark('run_input_prepared');
       await runAgents(initialMessages);
 
       /**
@@ -2495,7 +2546,7 @@ class AgentClient extends BaseClient {
       // introspection fall back to the durable chunk reconstruction, which is complete.
       // `setContentParts` still points the in-memory store at the seeded client content.
       if (streamId && this.contentParts) {
-        GenerationJobManager.setContentParts(streamId, this.contentParts);
+        GenerationJobManager.setContentParts(streamId, this.contentParts, this.jobCreatedAt);
       }
 
       // Carry the user's MCP auth into the rebuilt run so an approved MCP tool executes
