@@ -38,6 +38,8 @@ const {
   isNestedMessageTraversalProtected,
   assertModelBoundContent,
   isContentFilterError,
+  collectReachableAgents,
+  getSafeErrorMetadata,
   getRemoteAgentPermissions,
   createToolExecuteHandler,
   buildNonStreamingResponse,
@@ -68,6 +70,15 @@ const {
 const { getModelsConfig } = require('~/server/controllers/ModelController');
 const { logViolation } = require('~/cache');
 const db = require('~/models');
+
+const GENERIC_PROVIDER_ERROR = 'An error occurred while processing the request';
+
+function getUserFacingProviderError(error, appConfig) {
+  if (appConfig?.filters != null || appConfig?.messageFilter?.pii != null) {
+    return GENERIC_PROVIDER_ERROR;
+  }
+  return error instanceof Error ? error.message : 'An error occurred';
+}
 
 /**
  * Creates a tool loader function for the agent.
@@ -101,7 +112,7 @@ function createToolLoader(signal, definitionsOnly = true) {
       if (isContentFilterError(error)) {
         throw error;
       }
-      logger.error('Error loading tools for agent ' + agentId, error);
+      logger.error('Error loading tools for agent ' + agentId, getSafeErrorMetadata(error));
     }
   };
 }
@@ -145,6 +156,39 @@ function convertMessages(messages) {
       ...(msg.tool_call_id && { tool_call_id: msg.tool_call_id }),
     };
   });
+}
+
+/**
+ * Collect file-derived context exactly as it will be exposed to the model.
+ * Dynamic tool context uses the same synthesis as packages/api/src/agents/run.ts.
+ * @param {Array} agents
+ * @returns {Array}
+ */
+function collectModelBoundAgentFiles(agents) {
+  const files = [];
+  const seenFiles = new Set();
+  for (const agent of agents) {
+    for (const attachment of [
+      ...(agent?.attachments ?? []),
+      ...(agent?.requestAttachments ?? []),
+      ...(agent?.agentContextAttachments ?? []),
+    ]) {
+      if (attachment == null || seenFiles.has(attachment)) {
+        continue;
+      }
+      seenFiles.add(attachment);
+      files.push(attachment);
+    }
+
+    const dynamicToolInstructions = Object.values(agent?.dynamicToolContextMap ?? {})
+      .filter((value) => typeof value === 'string' && value !== '')
+      .join('\n')
+      .trim();
+    if (dynamicToolInstructions !== '') {
+      files.push({ content: dynamicToolInstructions });
+    }
+  }
+  return files;
 }
 
 /**
@@ -515,14 +559,16 @@ const OpenAIChatCompletionController = async (req, res) => {
 
     primaryConfig.edges = discoveredEdges;
     const runAgents = [primaryConfig, ...handoffAgentConfigs.values()];
+    const modelBoundAgents = collectReachableAgents(runAgents);
     const manualSkillPrimes = primaryConfig.manualSkillPrimes;
     const alwaysApplySkillPrimes = primaryConfig.alwaysApplySkillPrimes;
     assertModelBoundContent({
       filters: appConfig?.filters,
       legacyPii: appConfig?.messageFilter?.pii,
       submittedMessages: request.messages,
-      agents: runAgents,
+      agents: modelBoundAgents,
       skills: [...(manualSkillPrimes ?? []), ...(alwaysApplySkillPrimes ?? [])],
+      files: collectModelBoundAgentFiles(modelBoundAgents),
     });
 
     // Determine if streaming is enabled (check both request and agent config)
@@ -855,7 +901,7 @@ const OpenAIChatCompletionController = async (req, res) => {
     await run.processStream({ messages: formattedMessages }, config, {
       callbacks: {
         [Callback.TOOL_ERROR]: (graph, error, toolId) => {
-          logger.error(`[OpenAI API] Tool Error "${toolId}"`, error);
+          logger.error(`[OpenAI API] Tool Error "${toolId}"`, getSafeErrorMetadata(error));
         },
       },
     });
@@ -881,7 +927,7 @@ const OpenAIChatCompletionController = async (req, res) => {
         model: primaryConfig.model || agent.model_parameters?.model,
       },
     ).catch((err) => {
-      logger.error('[OpenAI API] Error recording usage:', err);
+      logger.error('[OpenAI API] Error recording usage:', getSafeErrorMetadata(err));
     });
 
     // Finalize response
@@ -894,7 +940,10 @@ const OpenAIChatCompletionController = async (req, res) => {
       // Wait for artifact processing after response ends (non-blocking)
       if (artifactPromises.length > 0) {
         Promise.all(artifactPromises).catch((artifactError) => {
-          logger.warn('[OpenAI API] Error processing artifacts:', artifactError);
+          logger.warn(
+            '[OpenAI API] Error processing artifacts:',
+            getSafeErrorMetadata(artifactError),
+          );
         });
       }
     } else {
@@ -903,7 +952,10 @@ const OpenAIChatCompletionController = async (req, res) => {
         try {
           await Promise.all(artifactPromises);
         } catch (artifactError) {
-          logger.warn('[OpenAI API] Error processing artifacts:', artifactError);
+          logger.warn(
+            '[OpenAI API] Error processing artifacts:',
+            getSafeErrorMetadata(artifactError),
+          );
         }
       }
 
@@ -933,8 +985,8 @@ const OpenAIChatCompletionController = async (req, res) => {
       );
     }
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : 'An error occurred';
-    logger.error('[OpenAI API] Error:', error);
+    logger.error('[OpenAI API] Error:', getSafeErrorMetadata(error));
+    const errorMessage = getUserFacingProviderError(error, appConfig);
 
     // Check if we already started streaming (headers sent)
     if (res.headersSent) {
@@ -1013,7 +1065,7 @@ const ListModelsController = async (req, res) => {
     });
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Failed to list models';
-    logger.error('[OpenAI API] Error listing models:', error);
+    logger.error('[OpenAI API] Error listing models:', getSafeErrorMetadata(error));
     sendErrorResponse(res, 500, errorMessage, 'server_error');
   }
 };
@@ -1080,7 +1132,7 @@ const GetModelController = async (req, res) => {
     });
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Failed to get model';
-    logger.error('[OpenAI API] Error getting model:', error);
+    logger.error('[OpenAI API] Error getting model:', getSafeErrorMetadata(error));
     sendErrorResponse(res, 500, errorMessage, 'server_error');
   }
 };

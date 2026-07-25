@@ -10,6 +10,8 @@ export interface GenerationJobMetadata {
   userMessage?: Agents.UserMessageMeta;
   /** Response message ID for tracking */
   responseMessageId?: string;
+  /** Exact assistant-message fields authored by the user during this running job. */
+  userSubmittedPaths?: string[];
   /** Sender label for the response (e.g., "GPT-4.1", "Claude") */
   sender?: string;
   /** Endpoint identifier for abort handling */

@@ -43,6 +43,9 @@ export interface SerializableJobData {
   /** Response message ID for reconnection */
   responseMessageId?: string;
 
+  /** Exact assistant-message fields authored by the user during this running job. */
+  userSubmittedPaths?: string[];
+
   /**
    * Deferred-tool names discovered (via `tool_search`) before a HITL pause, captured
    * so a resume can replay them into `createRun` — the rebuilt graph uses `messages: []`

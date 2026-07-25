@@ -171,6 +171,7 @@ async function importClaudeConvo(
           text: textContent,
           sender: isCreatedByUser ? 'user' : 'Claude',
           isCreatedByUser,
+          isUserSubmitted: true,
           user: requestUserId,
           endpoint: EModelEndpoint.anthropic,
           createdAt,
@@ -268,6 +269,7 @@ async function importLibreChatConvo(
           const flatMessage = {
             ...message,
             parentMessageId: parentMessageId,
+            isUserSubmitted: true,
             children: undefined, // Remove children from flat structure
           };
           flatMessages.push(flatMessage);
@@ -286,7 +288,10 @@ async function importLibreChatConvo(
       const flatMessages = flattenMessages(messagesToImport);
       cloneMessagesWithTimestamps(flatMessages, importBatchBuilder);
     } else if (messagesToImport) {
-      cloneMessagesWithTimestamps(messagesToImport, importBatchBuilder);
+      cloneMessagesWithTimestamps(
+        messagesToImport.map((message) => ({ ...message, isUserSubmitted: true })),
+        importBatchBuilder,
+      );
       for (const message of messagesToImport) {
         if (!firstMessageDate && message.createdAt) {
           firstMessageDate = new Date(message.createdAt);
@@ -507,6 +512,7 @@ function processConversation(conv, importBatchBuilder, requestUserId, defaultMod
       text: messageText,
       sender,
       isCreatedByUser,
+      isUserSubmitted: true,
       model,
       user: requestUserId,
       endpoint: EModelEndpoint.openAI,

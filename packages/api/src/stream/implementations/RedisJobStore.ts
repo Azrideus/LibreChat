@@ -461,6 +461,7 @@ export class RedisJobStore implements IJobStore {
       // its own discovery would otherwise inherit the prior run's tool names and force-load
       // deferred tools it never discovered on resume.
       'discoveredTools',
+      'userSubmittedPaths',
       // A replacement must start with an open steer channel — the closed flag
       // belongs to the finalized run this hash is being reused from.
       'steersClosed',
@@ -1782,6 +1783,7 @@ export class RedisJobStore implements IJobStore {
       error: data.error || undefined,
       userMessage: data.userMessage ? JSON.parse(data.userMessage) : undefined,
       responseMessageId: data.responseMessageId || undefined,
+      userSubmittedPaths: data.userSubmittedPaths ? JSON.parse(data.userSubmittedPaths) : undefined,
       createdEventEmitted: data.createdEventEmitted === '1',
       sender: data.sender || undefined,
       syncSent: data.syncSent === '1',

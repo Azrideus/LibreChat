@@ -55,6 +55,16 @@ const REAPED_JOB_ERROR = 'Generation timed out';
 const IDEMPOTENCY_TTL_SECONDS = 1200;
 const OAUTH_TOOL_CALL_PREFIX = `oauth${Constants.mcp_delimiter}`;
 
+function getSteerUserSubmittedPaths(content: readonly TMessageContentParts[]): string[] {
+  const paths: string[] = [];
+  for (let index = 0; index < content.length; index++) {
+    if (content[index]?.type === 'steer') {
+      paths.push(`/content/${index}`);
+    }
+  }
+  return paths;
+}
+
 function getToolCallName(toolCall: unknown): unknown {
   return toolCall != null && typeof toolCall === 'object' && 'name' in toolCall
     ? toolCall.name
@@ -532,6 +542,7 @@ class GenerationJobManagerClass {
         conversationId: jobData.conversationId,
         userMessage: jobData.userMessage,
         responseMessageId: jobData.responseMessageId,
+        userSubmittedPaths: jobData.userSubmittedPaths,
         sender: jobData.sender,
         endpoint: jobData.endpoint,
         iconURL: jobData.iconURL,
@@ -914,6 +925,12 @@ class GenerationJobManagerClass {
 
     /** Final event for abort */
     const userMessageId = jobData.userMessage?.messageId;
+    const userSubmittedPaths = [
+      ...new Set([
+        ...(jobData.userSubmittedPaths ?? []),
+        ...getSteerUserSubmittedPaths(abortContent as TMessageContentParts[]),
+      ]),
+    ];
 
     const abortFinalEvent: t.ServerSentEvent = {
       final: true,
@@ -944,6 +961,7 @@ class GenerationJobManagerClass {
             unfinished: true,
             error: false,
             isCreatedByUser: false,
+            ...(userSubmittedPaths.length > 0 && { userSubmittedPaths }),
           },
       aborted: true,
       // Flag for early abort - no messages saved, frontend should go to new chat
@@ -1618,6 +1636,9 @@ class GenerationJobManagerClass {
     const updates: Partial<SerializableJobData> = {};
     if (metadata.responseMessageId) {
       updates.responseMessageId = metadata.responseMessageId;
+    }
+    if (metadata.userSubmittedPaths) {
+      updates.userSubmittedPaths = metadata.userSubmittedPaths;
     }
     if (metadata.sender) {
       updates.sender = metadata.sender;

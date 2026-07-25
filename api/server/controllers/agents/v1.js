@@ -25,6 +25,7 @@ const {
   contentFilterUninspectableResponse,
   getBlockedOpaqueFileField,
   getBlockedUninspectableFileField,
+  resolveCanonicalFileReferences,
 } = require('@librechat/api');
 const {
   Time,
@@ -129,21 +130,55 @@ const blockFilteredActionContent = (req, res, actions) => {
   return true;
 };
 
-const blockFilteredAgentContent = (req, res, agentData) => {
+const blockFilteredAgentContent = async (req, res, agentData) => {
   const filters = req.config?.filters;
   if (filters == null) {
     return false;
   }
+  let opaqueAgentData = agentData;
+  let hydratedFiles = [];
+  if (filters.files?.pii != null) {
+    try {
+      const fileInspection = await resolveCanonicalFileReferences({
+        filters,
+        input: agentData,
+        user: req.user,
+        /**
+         * Every caller prunes tool-resource IDs against current ownership or
+         * the existing agent's already-authorized resources before reaching
+         * this point. Preserve that authorization decision while hydrating the
+         * canonical rows for content inspection.
+         */
+        getFiles: ({ file_id, tenantId }, sort, select) =>
+          db.getFiles(
+            {
+              file_id,
+              ...(tenantId != null && { tenantId }),
+            },
+            sort,
+            select,
+          ),
+      });
+      opaqueAgentData = fileInspection.sanitizedInput;
+      hydratedFiles = fileInspection.hydratedFiles;
+    } catch (error) {
+      if (error?.statusCode === 400 && error?.body != null) {
+        res.status(error.statusCode).json(error.body);
+        return true;
+      }
+      throw error;
+    }
+  }
   const avatarPath = agentData?.avatar?.filepath;
-  const uninspectableField = getBlockedOpaqueFileField(filters, agentData);
+  const uninspectableField = getBlockedOpaqueFileField(filters, opaqueAgentData);
   if (uninspectableField != null) {
     res.status(400).json(contentFilterUninspectableResponse(uninspectableField));
     return true;
   }
-  const fileFragments =
-    typeof avatarPath === 'string' && !avatarPath.toLowerCase().startsWith('data:')
-      ? extractFileContent({ filepath: avatarPath })
-      : [];
+  const fileFragments = hydratedFiles.flatMap(extractFileContent);
+  if (typeof avatarPath === 'string' && !avatarPath.toLowerCase().startsWith('data:')) {
+    fileFragments.push(...extractFileContent({ filepath: avatarPath }));
+  }
   const finding = inspectContent([...extractAgentContent(agentData), ...fileFragments], {
     filters,
   });
@@ -450,10 +485,6 @@ const createAgentHandler = async (req, res) => {
     }
     normalizeToolResourceFiles(agentData.tool_resources);
 
-    if (blockFilteredAgentContent(req, res, agentData)) {
-      return;
-    }
-
     const { id: userId, role: userRole } = req.user;
 
     if (agentData.tool_resources) {
@@ -462,6 +493,10 @@ const createAgentHandler = async (req, res) => {
         ownerIds: userId,
         logPrefix: '[/Agents]',
       });
+    }
+
+    if (await blockFilteredAgentContent(req, res, agentData)) {
+      return;
     }
 
     if (agentData.edges?.length) {
@@ -719,10 +754,6 @@ const updateAgentHandler = async (req, res) => {
       updateData.avatar = avatarField;
     }
 
-    if (blockFilteredAgentContent(req, res, updateData)) {
-      return;
-    }
-
     if (updateData.edges?.length) {
       const { id: userId, role: userRole } = req.user;
       const unauthorized = await validateEdgeAgentAccess(updateData.edges, userId, userRole);
@@ -791,6 +822,10 @@ const updateAgentHandler = async (req, res) => {
         existingToolResources: existingAgent.tool_resources,
         logPrefix: `[/Agents/:id] Agent ${id}`,
       });
+    }
+
+    if (await blockFilteredAgentContent(req, res, updateData)) {
+      return;
     }
 
     const isMCPTool = (t) =>
@@ -984,7 +1019,7 @@ const duplicateAgentHandler = async (req, res) => {
     }
 
     if (
-      blockFilteredAgentContent(req, res, newAgentData) ||
+      (await blockFilteredAgentContent(req, res, newAgentData)) ||
       blockFilteredActionContent(req, res, sanitizedActions)
     ) {
       return;
@@ -1443,7 +1478,7 @@ const revertAgentVersionHandler = async (req, res) => {
         : [];
 
     if (
-      blockFilteredAgentContent(req, res, revertData) ||
+      (await blockFilteredAgentContent(req, res, revertData)) ||
       blockFilteredActionContent(req, res, actions)
     ) {
       return;

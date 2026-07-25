@@ -6,12 +6,14 @@ const { handleAbort, validateModel, buildEndpointOption } = require('~/server/mi
 const validateConvoAccess = require('~/server/middleware/validate/convoAccess');
 const validateAssistant = require('~/server/middleware/assistants/validate');
 const chatController = require('~/server/controllers/assistants/chatV2');
+const { getFiles } = require('~/models');
 
 router.post('/abort', handleAbort());
 
 const filterMessageContent = createMessageFilterPii({
   getConfig: (req) => req.config?.messageFilter?.pii,
   getFilters: (req) => req.config?.filters,
+  getFiles,
 });
 
 /**

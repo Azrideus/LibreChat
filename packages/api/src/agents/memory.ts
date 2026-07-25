@@ -35,10 +35,11 @@ import type { BaseMessage, ToolMessage } from '@librechat/agents/langchain/messa
 import type { DynamicStructuredTool } from '@librechat/agents/langchain/tools';
 import type { Response as ServerResponse } from 'express';
 import type { ServerRequest, RunLLMConfig } from '~/types';
+import { resolveConfigHeaders, createSafeUser, getSafeErrorMetadata } from '~/utils';
 import { extractMemoryContent } from '~/protection/adapters/submissions';
+import { assertModelBoundContent } from '~/middleware/modelBoundContent';
 import { contentFilterBlockResponse } from '~/middleware/contentFilter';
 import { GenerationJobManager } from '~/stream/GenerationJobManager';
-import { resolveConfigHeaders, createSafeUser } from '~/utils';
 import { inspectContent } from '~/protection/runtime';
 import { checkAccess } from '~/middleware/access';
 import { isMemoryEnabled } from '~/memory';
@@ -46,7 +47,7 @@ import Tokenizer from '~/utils/tokenizer';
 
 type RequiredMemoryMethods = Pick<
   MemoryMethods,
-  'setMemory' | 'deleteMemory' | 'getFormattedMemories'
+  'setMemory' | 'deleteMemory' | 'getFormattedMemories' | 'getUserMemories'
 >;
 
 type ToolEndMetadata = Record<string, unknown> & {
@@ -254,7 +255,7 @@ export const createMemoryTool = ({
           logger.warn(`Failed to set memory for key "${key}" for user "${userId}"`);
           return [`Failed to set memory for key "${key}"`, undefined];
         } catch (error) {
-          logger.error('Memory Agent failed to set memory', error);
+          logger.error('Memory Agent failed to set memory', getSafeErrorMetadata(error));
           return [`Error setting memory for key "${key}"`, undefined];
         }
       };
@@ -333,7 +334,7 @@ export const createDeleteMemoryTool = ({
         logger.warn(`Failed to delete memory for key "${key}" for user "${userId}"`);
         return [`Failed to delete memory for key "${key}"`, undefined];
       } catch (error) {
-        logger.error('Memory Agent failed to delete memory', error);
+        logger.error('Memory Agent failed to delete memory', getSafeErrorMetadata(error));
         return [`Error deleting memory for key "${key}"`, undefined];
       }
     },
@@ -580,7 +581,7 @@ export async function isMemoryToolAllowed({
       getRoleByName,
     });
   } catch (error) {
-    logger.error('[memory] Memory permission check failed', error);
+    logger.error('[memory] Memory permission check failed', getSafeErrorMetadata(error));
     return false;
   }
 }
@@ -654,7 +655,10 @@ export async function buildInlineMemoryTool({
       });
       totalTokens = formatted?.totalTokens ?? 0;
     } catch (error) {
-      logger.error('[memory] Failed to load memory token count for set_memory', error);
+      logger.error(
+        '[memory] Failed to load memory token count for set_memory',
+        getSafeErrorMetadata(error),
+      );
       /** Fail closed: without the current usage total a configured tokenLimit
        *  could be silently bypassed. */
       return null;
@@ -706,6 +710,7 @@ export async function processMemory({
   deleteMemory,
   messages,
   memory,
+  memoryEntries,
   messageId,
   conversationId,
   validKeys,
@@ -729,6 +734,12 @@ export async function processMemory({
   messages: BaseMessage[];
   validKeys?: string[];
   instructions: string;
+  /** Canonical rows preserve key/value granularity for field-scoped policy. */
+  memoryEntries?: readonly {
+    key?: string;
+    value?: string;
+    summary?: string;
+  }[];
   tokenLimit?: number;
   totalTokens?: number;
   filters?: FiltersConfig;
@@ -737,6 +748,23 @@ export async function processMemory({
   user?: IUser;
 }): Promise<(TAttachment | null)[] | undefined> {
   try {
+    const submittedMessages = messages.filter((message) => message._getType() !== 'ai');
+    let memories = memoryEntries ?? [];
+    if (memoryEntries == null && memory) {
+      /**
+       * Direct callers may only have the formatted context. Inspect it
+       * conservatively under every field so field selection cannot turn
+       * missing canonical provenance into a bypass.
+       */
+      memories = [{ key: memory, value: memory, summary: memory }];
+    }
+    assertModelBoundContent({
+      filters,
+      submittedMessages,
+      agents: [{ instructions, model_parameters: llmConfig }],
+      memories,
+    });
+
     const memoryTool = createMemoryTool({
       userId,
       agentId,
@@ -928,7 +956,7 @@ ${memory ?? 'No existing memories'}`;
   } catch (error) {
     logger.error(
       `[MemoryAgent] Failed to process memory | userId: ${userId} | conversationId: ${conversationId} | messageId: ${messageId}`,
-      { error },
+      getSafeErrorMetadata(error),
     );
   }
 }
@@ -960,10 +988,15 @@ export async function createMemoryProcessor({
   const { validKeys, instructions, llmConfig, tokenLimit } = config;
   const finalInstructions = instructions || getDefaultInstructions(validKeys, tokenLimit);
 
-  const { withKeys, withoutKeys, totalTokens } = await memoryMethods.getFormattedMemories({
-    userId,
-    agentId,
-  });
+  const [{ withKeys, withoutKeys, totalTokens }, memoryEntries] = await Promise.all([
+    memoryMethods.getFormattedMemories({
+      userId,
+      agentId,
+    }),
+    filters?.memories?.pii == null
+      ? Promise.resolve(undefined)
+      : memoryMethods.getUserMemories({ userId, agentId }),
+  ]);
 
   return [
     withoutKeys,
@@ -981,6 +1014,7 @@ export async function createMemoryProcessor({
           streamId,
           conversationId,
           memory: withKeys,
+          memoryEntries,
           totalTokens: totalTokens || 0,
           filters,
           instructions: finalInstructions,
@@ -989,7 +1023,7 @@ export async function createMemoryProcessor({
           user,
         });
       } catch (error) {
-        logger.error('Memory Agent failed to process memory', error);
+        logger.error('Memory Agent failed to process memory', getSafeErrorMetadata(error));
       }
     },
   ];
@@ -1063,7 +1097,7 @@ export function createMemoryCallback({
     }
     artifactPromises.push(
       handleMemoryArtifact({ res, data, metadata, streamId }).catch((error) => {
-        logger.error('Error processing memory artifact content:', error);
+        logger.error('Error processing memory artifact content:', getSafeErrorMetadata(error));
         return null;
       }),
     );

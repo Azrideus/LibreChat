@@ -14,6 +14,9 @@ const {
   extractFeedbackContent,
   extractStoredMessageContent,
   contentFilterBlockResponse,
+  assertModelBoundContent,
+  isContentFilterError,
+  resolveCanonicalFileReferences,
 } = require('@librechat/api');
 const { findAllArtifacts, replaceArtifactContent } = require('~/server/services/Artifacts/update');
 const {
@@ -30,6 +33,7 @@ const filterStoredMessageContent = createContentFilter({
   getFilters: (req) => req.config?.filters,
   getMessageRoles: (req) => [req.body?.role],
   getOpaqueFileInput: (req) => req.body,
+  getFiles: db.getFiles,
   extract: (req) => extractStoredMessageContent(req.body),
 });
 const filterFeedbackContent = createContentFilter({
@@ -70,6 +74,14 @@ const blockFilteredChatContent = (req, res, chatData) => {
   res.status(400).json(contentFilterBlockResponse(finding));
   return true;
 };
+
+const mergeUserSubmittedPaths = (...pathLists) => [
+  ...new Set(
+    pathLists
+      .flat()
+      .filter((path) => typeof path === 'string' && path.startsWith('/') && path.length <= 2048),
+  ),
+];
 
 router.use(requireJwtAuth);
 
@@ -166,7 +178,7 @@ router.get('/', async (req, res) => {
  * @param {string} req.body.agentId - The agentId to filter content by
  * @returns {TMessage} The newly created branch message
  */
-router.post('/branch', async (req, res) => {
+router.post('/branch', configMiddleware, async (req, res) => {
   try {
     const { messageId, agentId } = req.body;
     const userId = req.user.id;
@@ -197,10 +209,25 @@ router.post('/branch', async (req, res) => {
 
     /** @type {Array<import('librechat-data-provider').TMessageContentParts>} */
     const filteredContent = [];
-    for (const part of sourceMessage.content) {
+    const sourceUserSubmittedPaths = Array.isArray(sourceMessage.userSubmittedPaths)
+      ? sourceMessage.userSubmittedPaths.filter((path) => typeof path === 'string')
+      : [];
+    const remappedUserSubmittedPaths = sourceUserSubmittedPaths.filter((path) =>
+      path.startsWith('/attachments/'),
+    );
+    for (let sourceIndex = 0; sourceIndex < sourceMessage.content.length; sourceIndex++) {
+      const part = sourceMessage.content[sourceIndex];
       if (part?.agentId === agentId) {
+        const targetIndex = filteredContent.length;
         const { agentId: _a, groupId: _g, ...cleanPart } = part;
         filteredContent.push(cleanPart);
+        const sourcePrefix = `/content/${sourceIndex}`;
+        const targetPrefix = `/content/${targetIndex}`;
+        for (const path of sourceUserSubmittedPaths) {
+          if (path === sourcePrefix || path.startsWith(`${sourcePrefix}/`)) {
+            remappedUserSubmittedPaths.push(`${targetPrefix}${path.slice(sourcePrefix.length)}`);
+          }
+        }
       }
     }
 
@@ -220,11 +247,36 @@ router.post('/branch', async (req, res) => {
       endpoint: sourceMessage.endpoint,
       sender: sourceMessage.sender,
       iconURL: sourceMessage.iconURL,
+      ...(typeof sourceMessage.isUserSubmitted === 'boolean' && {
+        isUserSubmitted: sourceMessage.isUserSubmitted,
+      }),
+      ...(remappedUserSubmittedPaths.length > 0 && {
+        userSubmittedPaths: mergeUserSubmittedPaths(remappedUserSubmittedPaths),
+      }),
       content: filteredContent,
       unfinished: false,
       error: false,
       user: userId,
     };
+
+    let storedMessageForInspection = newMessage;
+    let resolvedFiles = [];
+    if (req.config?.filters?.files?.pii != null) {
+      const fileInspection = await resolveCanonicalFileReferences({
+        filters: req.config.filters,
+        input: newMessage,
+        user: req.user,
+        getFiles: db.getFiles,
+      });
+      storedMessageForInspection = fileInspection.sanitizedInput;
+      resolvedFiles = fileInspection.hydratedFiles;
+    }
+    assertModelBoundContent({
+      filters: req.config?.filters,
+      legacyPii: req.config?.messageFilter?.pii,
+      storedMessages: [storedMessageForInspection],
+      resolvedFiles,
+    });
 
     const savedMessage = await db.saveMessage(
       {
@@ -242,6 +294,9 @@ router.post('/branch', async (req, res) => {
 
     res.status(201).json(savedMessage);
   } catch (error) {
+    if (isContentFilterError(error)) {
+      return res.status(error.statusCode).json(error.body);
+    }
     logger.error('Error creating branch message:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
@@ -324,6 +379,12 @@ router.post('/artifact/:messageId', configMiddleware, async (req, res) => {
         conversationId: message.conversationId,
         text: message.text,
         content: message.content,
+        userSubmittedPaths: mergeUserSubmittedPaths(
+          message.userSubmittedPaths,
+          targetArtifact.source === 'content'
+            ? `/content/${targetArtifact.partIndex}/text`
+            : '/text',
+        ),
         user: req.user.id,
       },
       { context: 'POST /api/messages/artifact/:messageId' },
@@ -374,6 +435,8 @@ router.get('/:conversationId', prepareMessageRequestValidation, async (req, res)
 router.post('/:conversationId', storedMessageMutationMiddleware, async (req, res) => {
   try {
     const message = { ...req.body, conversationId: req.params.conversationId };
+    delete message.isUserSubmitted;
+    delete message.userSubmittedPaths;
     const reqCtx = {
       userId: req?.user?.id,
       isTemporary: req?.body?.isTemporary,
@@ -381,7 +444,7 @@ router.post('/:conversationId', storedMessageMutationMiddleware, async (req, res
     };
     const savedMessage = await db.saveMessage(
       reqCtx,
-      { ...message, user: req.user.id },
+      { ...message, user: req.user.id, isUserSubmitted: true },
       { context: 'POST /api/messages/:conversationId' },
     );
     if (!savedMessage) {
@@ -433,7 +496,7 @@ router.put('/:conversationId/:messageId', messageMutationMiddleware, async (req,
       const existing = (
         await db.getMessages(
           { conversationId, messageId, user: req.user.id },
-          'quotes isCreatedByUser',
+          'quotes isCreatedByUser userSubmittedPaths',
         )
       )?.[0];
       const textToCount = mergeQuotedTextForCount(
@@ -450,12 +513,20 @@ router.put('/:conversationId/:messageId', messageMutationMiddleware, async (req,
         return;
       }
       const tokenCount = await countTokens(textToCount, model);
-      const result = await db.updateMessage(req?.user?.id, { messageId, text, tokenCount });
+      const result = await db.updateMessage(req?.user?.id, {
+        messageId,
+        text,
+        tokenCount,
+        userSubmittedPaths: mergeUserSubmittedPaths(existing?.userSubmittedPaths, '/text'),
+      });
       return res.status(200).json(result);
     }
 
     const message = (
-      await db.getMessages({ conversationId, messageId, user: req.user.id }, 'content tokenCount')
+      await db.getMessages(
+        { conversationId, messageId, user: req.user.id },
+        'content tokenCount userSubmittedPaths',
+      )
     )?.[0];
     if (!message) {
       return res.status(404).json({ error: 'Message not found' });
@@ -501,6 +572,10 @@ router.put('/:conversationId/:messageId', messageMutationMiddleware, async (req,
       messageId,
       content: updatedContent,
       tokenCount,
+      userSubmittedPaths: mergeUserSubmittedPaths(
+        message.userSubmittedPaths,
+        `/content/${index}/${currentPartType}`,
+      ),
     });
     return res.status(200).json(result);
   } catch (error) {

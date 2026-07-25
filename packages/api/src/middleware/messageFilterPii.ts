@@ -6,13 +6,23 @@ import type {
 } from 'express';
 import type { FiltersConfig, MessageFilterPiiConfig } from 'librechat-data-provider';
 import {
+  contentFilterUninspectableResponse,
+  getBlockedOpaqueFileField,
+  resolveCanonicalFileReferences,
+  UninspectableFileError,
+  type CanonicalFileInspectionFile,
+  type GetCanonicalFilesForInspection,
+} from '../protection/files';
+import {
   getContentTraversalFragments,
   isContentTraversalLimitError,
   isNestedMessageTraversalProtected,
 } from '../protection/adapters/nested';
-import { contentFilterUninspectableResponse, getBlockedOpaqueFileField } from '../protection/files';
+import {
+  extractFileContent,
+  extractStoredMessageContent,
+} from '../protection/adapters/submissions';
 import { createLegacyPiiInspector, toLegacyPiiMatch } from '../protection/legacy';
-import { extractStoredMessageContent } from '../protection/adapters/submissions';
 import { extractMessageContent } from '../protection/adapters/messages';
 import { extractChatContent } from '../protection/adapters/chat';
 import { contentFilterBlockResponse } from './contentFilter';
@@ -44,22 +54,57 @@ export function findPiiMatchInMessages(
 export interface CreateMessageFilterPiiOptions {
   getConfig: (req: ServerRequest) => MessageFilterPiiConfig | undefined;
   getFilters?: (req: ServerRequest) => FiltersConfig | undefined;
+  getFiles?: GetCanonicalFilesForInspection;
 }
 
 export function createMessageFilterPii(options: CreateMessageFilterPiiOptions): RequestHandler {
-  return function messageFilterPii(req: ServerRequest, res: ServerResponse, next: NextFunction) {
+  return async function messageFilterPii(
+    req: ServerRequest,
+    res: ServerResponse,
+    next: NextFunction,
+  ) {
     const legacyPii = options.getConfig(req);
     const filters = options.getFilters?.(req);
     if (legacyPii == null && filters == null) {
       next();
       return;
     }
-    const uninspectableField = getBlockedOpaqueFileField(filters, req.body);
+
+    let opaqueFileInput = req.body;
+    let hydratedFiles: CanonicalFileInspectionFile[] = [];
+    if (options.getFiles != null && filters?.files?.pii != null) {
+      try {
+        const fileInspection = await resolveCanonicalFileReferences({
+          filters,
+          input: req.body,
+          user: (
+            req as ServerRequest & {
+              user?: { id?: string; tenantId?: string | null };
+            }
+          ).user,
+          getFiles: options.getFiles,
+        });
+        opaqueFileInput = fileInspection.sanitizedInput;
+        hydratedFiles = fileInspection.hydratedFiles;
+      } catch (error) {
+        if (error instanceof UninspectableFileError) {
+          res.status(error.statusCode).json(error.body);
+          return;
+        }
+        next(error);
+        return;
+      }
+    }
+
+    const uninspectableField = getBlockedOpaqueFileField(filters, opaqueFileInput);
     if (uninspectableField != null) {
       res.status(400).json(contentFilterUninspectableResponse(uninspectableField));
       return;
     }
     const fragments = [...extractChatContent(req.body)];
+    for (const file of hydratedFiles) {
+      fragments.push(...extractFileContent(file));
+    }
     if (filters != null) {
       try {
         fragments.push(...extractStoredMessageContent(req.body));

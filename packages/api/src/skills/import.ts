@@ -20,7 +20,7 @@ import {
   extractFileContent,
   extractSkillContent,
   contentFilterUninspectableResponse,
-  getBlockedUninspectableFileField,
+  getBlockedUninspectableSkillFileField,
 } from '~/protection';
 import { contentFilterBlockResponse } from '~/middleware/contentFilter';
 import { resolveRequestTenantId } from '~/middleware/tenant';
@@ -193,7 +193,7 @@ function blockFilteredImportContent(
 }
 
 function blockUninspectableImportFile(req: ServerRequest, res: Response): boolean {
-  const field = getBlockedUninspectableFileField(req.config?.filters, [
+  const field = getBlockedUninspectableSkillFileField(req.config?.filters, [
     'content',
     'extracted_text',
   ]);
@@ -308,6 +308,24 @@ async function handleMarkdown(
   deps: ImportSkillDeps,
   file: Express.Multer.File,
 ) {
+  const limits = getImportLimits(resolveImportLimits(deps.limits, req));
+  const skillPii = req.config?.filters?.skills?.pii;
+  const filePii = req.config?.filters?.files?.pii;
+  const inspectFileText =
+    hasFilterField(skillPii, 'file_text') ||
+    hasFilterField(filePii, 'content') ||
+    hasFilterField(filePii, 'extracted_text');
+  const contentInspectionLimit = Math.min(
+    limits.maxContentInspectionBytes,
+    limits.maxDecompressedBytes,
+  );
+  if (
+    inspectFileText &&
+    file.buffer.length > contentInspectionLimit &&
+    blockUninspectableImportFile(req, res)
+  ) {
+    return res;
+  }
   if (isBinaryBuffer(file.buffer) && blockUninspectableImportFile(req, res)) {
     return res;
   }
