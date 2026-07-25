@@ -702,10 +702,9 @@ export type TImportReport = {
 
 export type TImportPhase =
   | 'queued'
-  | 'inspecting'
   | 'awaiting_confirmation'
-  | 'conversations'
   | 'assets'
+  | 'conversations'
   | 'completed'
   | 'failed'
   | 'cancelled';
