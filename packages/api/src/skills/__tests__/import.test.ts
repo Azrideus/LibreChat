@@ -563,7 +563,7 @@ describe('createImportHandler', () => {
       skills: {
         pii: {
           fields: ['file_text'],
-          starterPatterns: [],
+          starterPatterns: ['sk_prefix'],
         },
       },
     });
@@ -721,7 +721,7 @@ describe('createImportHandler', () => {
       skills: {
         pii: {
           fields: ['file_text'],
-          starterPatterns: [],
+          starterPatterns: ['sk_prefix'],
         },
       },
       files: {
@@ -852,7 +852,7 @@ describe('createImportHandler', () => {
       skills: {
         pii: {
           fields: ['file_text'],
-          starterPatterns: [],
+          starterPatterns: ['sk_prefix'],
         },
       },
     });
