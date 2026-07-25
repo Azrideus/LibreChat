@@ -5,18 +5,18 @@ import type {
   Response as ServerResponse,
 } from 'express';
 import type { FiltersConfig, MessageFilterPiiConfig } from 'librechat-data-provider';
-import { createLegacyPiiInspector, toLegacyPiiMatch } from '../protection/legacy';
-import { extractMessageContent } from '../protection/adapters/messages';
-import { extractStoredMessageContent } from '../protection/adapters/submissions';
-import { extractChatContent } from '../protection/adapters/chat';
 import {
   getContentTraversalFragments,
   isContentTraversalLimitError,
   isNestedMessageTraversalProtected,
 } from '../protection/adapters/nested';
 import { contentFilterUninspectableResponse, getBlockedOpaqueFileField } from '../protection/files';
-import { inspectContent } from '../protection/runtime';
+import { createLegacyPiiInspector, toLegacyPiiMatch } from '../protection/legacy';
+import { extractStoredMessageContent } from '../protection/adapters/submissions';
+import { extractMessageContent } from '../protection/adapters/messages';
+import { extractChatContent } from '../protection/adapters/chat';
 import { contentFilterBlockResponse } from './contentFilter';
+import { inspectContent } from '../protection/runtime';
 
 export interface PiiMatch {
   id: string;

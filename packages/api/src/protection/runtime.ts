@@ -1,8 +1,8 @@
 import type { FiltersConfig, MessageFilterPiiConfig } from 'librechat-data-provider';
-import type { PatternContentInspectorConfig } from './detectors/pattern';
 import type { ContentSource, ProtectionFinding, TextContentFragment } from './types';
-import { createPatternContentInspector } from './detectors/pattern';
+import type { PatternContentInspectorConfig } from './detectors/pattern';
 import { createLegacyPiiInspector, isLegacyPiiFragment } from './legacy';
+import { createPatternContentInspector } from './detectors/pattern';
 
 interface CompiledFilter {
   readonly detectorId: string;

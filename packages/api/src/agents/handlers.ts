@@ -13,20 +13,9 @@ import type {
 } from '@librechat/agents';
 import type { StructuredToolInterface } from '@librechat/agents/langchain/tools';
 import type { CodeEnvRef } from 'librechat-data-provider';
-import type { SkillFileRecord } from './skillFiles';
 import type { TextContentFragment } from '~/protection';
+import type { SkillFileRecord } from './skillFiles';
 import type { ServerRequest } from '~/types';
-import { contentFilterBlockResponse, isContentFilterError } from '~/middleware/contentFilter';
-import {
-  contentFilterUninspectableResponse,
-  extractFileContent,
-  extractSkillContent,
-  extractToolArgumentContent,
-  getContentTraversalFragments,
-  getBlockedUninspectableFileField,
-  inspectContent,
-  isContentTraversalLimitError,
-} from '~/protection';
 import {
   backgroundTaskRegistry,
   runCheckBackgroundTask,
@@ -45,11 +34,22 @@ import {
   RUN_IN_BACKGROUND_ARG,
 } from './background';
 import {
+  contentFilterUninspectableResponse,
+  extractFileContent,
+  extractSkillContent,
+  extractToolArgumentContent,
+  getContentTraversalFragments,
+  getBlockedUninspectableFileField,
+  inspectContent,
+  isContentTraversalLimitError,
+} from '~/protection';
+import {
   CREATE_FILE_TOOL_NAME,
   EDIT_FILE_TOOL_NAME,
   HOST_FILE_AUTHORING_ARTIFACT_KEY,
   isCodeSessionToolName,
 } from './tools';
+import { contentFilterBlockResponse, isContentFilterError } from '~/middleware/contentFilter';
 import { logAxiosError, runOutsideTracing, truncateMiddle } from '~/utils';
 import { buildSkillPrimeMessage, SKILL_FILE_PREFIX } from './skills';
 import { parseFrontmatter } from '../skills/import';

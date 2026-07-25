@@ -9,6 +9,7 @@ import type {
   StoredMessageContentInput,
 } from '../protection/adapters/submissions';
 import type { ExternalChatMessage } from '../protection/adapters/messages';
+import type { TextContentFragment } from '../protection/types';
 import {
   extractAgentContent,
   extractAssistantActionContent,
@@ -18,9 +19,8 @@ import {
   extractSkillContent,
   extractStoredMessageContent,
 } from '../protection/adapters/submissions';
-import { extractMessageContent } from '../protection/adapters/messages';
 import { getBlockedOpaqueFileField, UninspectableFileError } from '../protection/files';
-import type { TextContentFragment } from '../protection/types';
+import { extractMessageContent } from '../protection/adapters/messages';
 import { inspectContent } from '../protection/runtime';
 import { ContentFilterError } from './contentFilter';
 

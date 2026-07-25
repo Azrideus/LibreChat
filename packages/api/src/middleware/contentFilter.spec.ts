@@ -5,12 +5,12 @@ import {
   ContentTraversalLimitError,
   getContentTraversalFragments,
 } from '../protection/adapters/nested';
-import { UninspectableFileError } from '../protection/files';
 import {
   contentFilterBlockResponse,
   createContentFilter,
   isContentFilterError,
 } from './contentFilter';
+import { UninspectableFileError } from '../protection/files';
 
 jest.mock('@librechat/data-schemas', () => ({
   logger: { warn: jest.fn(), error: jest.fn(), info: jest.fn(), debug: jest.fn() },

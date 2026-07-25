@@ -1,22 +1,22 @@
-import type { FiltersConfig, MessageFilterPiiConfig } from 'librechat-data-provider';
 import type {
   NextFunction,
   RequestHandler,
   Request as ServerRequest,
   Response as ServerResponse,
 } from 'express';
+import type { FiltersConfig, MessageFilterPiiConfig } from 'librechat-data-provider';
 import type { ProtectionFinding, TextContentFragment } from '../protection/types';
-import {
-  contentFilterUninspectableResponse,
-  getBlockedOpaqueFileField,
-  UninspectableFileError,
-} from '../protection/files';
 import {
   ContentTraversalLimitError,
   getContentTraversalFragments,
   isContentTraversalLimitError,
   isNestedMessageTraversalProtected,
 } from '../protection/adapters/nested';
+import {
+  contentFilterUninspectableResponse,
+  getBlockedOpaqueFileField,
+  UninspectableFileError,
+} from '../protection/files';
 import { inspectContent } from '../protection/runtime';
 
 export interface ContentFilterBlockResponse {

@@ -30,14 +30,14 @@ import type {
   IUser,
   FormattedMemoriesResult,
 } from '@librechat/data-schemas';
+import type { TAttachment, FiltersConfig, MemoryArtifact } from 'librechat-data-provider';
 import type { BaseMessage, ToolMessage } from '@librechat/agents/langchain/messages';
 import type { DynamicStructuredTool } from '@librechat/agents/langchain/tools';
-import type { TAttachment, FiltersConfig, MemoryArtifact } from 'librechat-data-provider';
 import type { Response as ServerResponse } from 'express';
 import type { ServerRequest, RunLLMConfig } from '~/types';
 import { extractMemoryContent } from '~/protection/adapters/submissions';
-import { GenerationJobManager } from '~/stream/GenerationJobManager';
 import { contentFilterBlockResponse } from '~/middleware/contentFilter';
+import { GenerationJobManager } from '~/stream/GenerationJobManager';
 import { resolveConfigHeaders, createSafeUser } from '~/utils';
 import { inspectContent } from '~/protection/runtime';
 import { checkAccess } from '~/middleware/access';

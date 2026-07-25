@@ -13,8 +13,8 @@ import {
   UninspectableFileError,
 } from '~/protection';
 import { ContentFilterError, isContentFilterError } from '~/middleware/contentFilter';
-import { isBinaryBuffer } from '~/skills/binary';
 import { extractInvokedSkillsFromPayload } from './run';
+import { isBinaryBuffer } from '~/skills/binary';
 import { SKILL_FILE_PREFIX } from './skills';
 import { logAxiosError } from '~/utils';
 

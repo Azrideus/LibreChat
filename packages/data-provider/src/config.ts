@@ -12,10 +12,10 @@ import { ComponentTypes, SettingTypes, OptionTypes } from './generate';
 import { specsConfigSchema, TSpecsConfig } from './models';
 import { REFILL_INTERVAL_UNITS } from './balance';
 import { fileConfigSchema } from './file-config';
+import { filtersConfigSchema } from './filters';
 import { apiBaseUrl } from './api-endpoints';
 import { FileSources } from './types/files';
 import { MCPServersSchema } from './mcp';
-import { filtersConfigSchema } from './filters';
 export { MAX_SUBAGENTS } from './limits';
 
 export const defaultSocialLogins = ['google', 'facebook', 'openid', 'github', 'discord', 'saml'];

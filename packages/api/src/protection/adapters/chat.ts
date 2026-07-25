@@ -1,6 +1,6 @@
 import type { ContentFieldMap, ContentSource, TextContentFragment } from '../types';
-import { getReferencedQuoteEntries, mergeQuotedText } from '../../utils/quotes';
 import { extractModelParameterContent, type ModelParameterContentInput } from './submissions';
+import { getReferencedQuoteEntries, mergeQuotedText } from '../../utils/quotes';
 
 export interface ChatSubmissionDecision {
   readonly responseText?: string;
