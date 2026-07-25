@@ -31,9 +31,9 @@ import type {
 } from '~/types';
 import type { ResolvedManualSkill, ResolvedAlwaysApplySkill, ResolvedSkillCatalog } from './skills';
 import type { LCAvailableTools, RequestScopedMCPConnectionStore } from '../mcp/types';
-import type { TFilterFilesByAgentAccess } from './resources';
 import type { ContentTraversalLimitError } from '../protection/adapters/nested';
 import type { TextContentFragment } from '../protection/types';
+import type { TFilterFilesByAgentAccess } from './resources';
 import {
   injectSkillCatalog,
   resolveSkillCatalog,
@@ -42,6 +42,11 @@ import {
   unionPrimeAllowedTools,
   MAX_PRIMED_SKILLS_PER_TURN,
 } from './skills';
+import {
+  getContentTraversalFragments,
+  isContentTraversalProtected,
+  isContentTraversalLimitError,
+} from '../protection/adapters/nested';
 import {
   optionalChainWithEmptyCheck,
   extractLibreChatParams,
@@ -54,11 +59,6 @@ import {
   isFileAuthoringToolDefinition,
 } from './tools';
 import { extractAgentContent, extractSkillContent } from '../protection/adapters/submissions';
-import {
-  getContentTraversalFragments,
-  isContentTraversalProtected,
-  isContentTraversalLimitError,
-} from '../protection/adapters/nested';
 import { normalizeServerName, requiresEphemeralUserConnection } from '~/mcp/utils';
 import { assertModelBoundContent } from '../middleware/modelBoundContent';
 import { registerMemoryTools, memoryToolUsageGuard } from './memory';
