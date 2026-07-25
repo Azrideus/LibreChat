@@ -661,6 +661,16 @@ const ResumeAgentController = async (req, res, next, initializeClient, addTitle)
     await client.resumeCompletion({
       resumeValue: mapped.resumeValue,
       seedContent,
+      storedMessages: job.metadata.userMessage
+        ? [
+            {
+              ...job.metadata.userMessage,
+              isCreatedByUser: true,
+              role: 'user',
+              files: req.body.files,
+            },
+          ]
+        : [],
       abortController: job.abortController,
       // Carry the user's MCP auth so approved MCP tools run with their credentials.
       userMCPAuthMap: result.userMCPAuthMap,

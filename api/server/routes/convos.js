@@ -8,6 +8,11 @@ const {
   restoreTenantContextFromReq,
   deleteAllSharedLinksWithCleanup,
   deleteConvoSharedLinksWithCleanup,
+  inspectContent,
+  createContentFilter,
+  isContentFilterError,
+  contentFilterBlockResponse,
+  extractConversationTitleContent,
 } = require('@librechat/api');
 const { logger } = require('@librechat/data-schemas');
 const { CacheKeys, EModelEndpoint } = require('librechat-data-provider');
@@ -30,6 +35,11 @@ const assistantClients = {
 };
 
 const router = express.Router();
+const filterConversationTitle = createContentFilter({
+  getFilters: (req) => req.config?.filters,
+  extract: (req) => extractConversationTitleContent(req.body),
+});
+
 router.use(requireJwtAuth);
 
 const isValidProjectFilter = (projectId) =>
@@ -252,7 +262,7 @@ const MAX_CONVO_TITLE_LENGTH = 1024;
  * @param {string} req.body.arg.title - The new title for the conversation.
  * @returns {object} 201 - The updated conversation object.
  */
-router.post('/update', validateConvoAccess, async (req, res) => {
+router.post('/update', validateConvoAccess, configMiddleware, async (req, res) => {
   const { conversationId, title } = req.body?.arg ?? {};
 
   if (!conversationId) {
@@ -268,6 +278,14 @@ router.post('/update', validateConvoAccess, async (req, res) => {
   }
 
   const sanitizedTitle = title.trim().slice(0, MAX_CONVO_TITLE_LENGTH);
+  if (req.config?.filters != null) {
+    const finding = inspectContent(extractConversationTitleContent({ title: sanitizedTitle }), {
+      filters: req.config.filters,
+    });
+    if (finding != null) {
+      return res.status(400).json(contentFilterBlockResponse(finding));
+    }
+  }
 
   try {
     const dbResponse = await db.saveConvo(
@@ -330,9 +348,13 @@ router.post(
         requestUserId: req.user.id,
         userRole: req.user.role,
         interfaceConfig: req.config?.interfaceConfig,
+        filters: req.config?.filters,
       });
       res.status(201).json({ message: 'Conversation(s) imported successfully' });
     } catch (error) {
+      if (isContentFilterError(error)) {
+        return res.status(error.statusCode).json(error.body);
+      }
       logger.error('Error processing file', error);
       res.status(500).send('Error processing file');
     }
@@ -347,7 +369,7 @@ router.post(
  * @param {express.Response<TForkConvoResponse>} res - Express response object.
  * @returns {Promise<void>} - The response after forking the conversation.
  */
-router.post('/fork', forkIpLimiter, forkUserLimiter, async (req, res) => {
+router.post('/fork', forkIpLimiter, forkUserLimiter, configMiddleware, async (req, res) => {
   try {
     /** @type {TForkConvoRequest} */
     const { conversationId, messageId, option, splitAtTarget, latestMessageId } = req.body;
@@ -359,29 +381,44 @@ router.post('/fork', forkIpLimiter, forkUserLimiter, async (req, res) => {
       records: true,
       splitAtTarget,
       option,
+      filters: req.config?.filters,
     });
 
     res.json(result);
   } catch (error) {
+    if (isContentFilterError(error)) {
+      return res.status(error.statusCode).json(error.body);
+    }
     logger.error('Error forking conversation:', error);
     res.status(500).send('Error forking conversation');
   }
 });
 
-router.post('/duplicate', forkIpLimiter, forkUserLimiter, async (req, res) => {
-  const { conversationId, title } = req.body;
+router.post(
+  '/duplicate',
+  forkIpLimiter,
+  forkUserLimiter,
+  configMiddleware,
+  filterConversationTitle,
+  async (req, res) => {
+    const { conversationId, title } = req.body;
 
-  try {
-    const result = await duplicateConversation({
-      userId: req.user.id,
-      conversationId,
-      title,
-    });
-    res.status(201).json(result);
-  } catch (error) {
-    logger.error('Error duplicating conversation:', error);
-    res.status(500).send('Error duplicating conversation');
-  }
-});
+    try {
+      const result = await duplicateConversation({
+        userId: req.user.id,
+        conversationId,
+        title,
+        filters: req.config?.filters,
+      });
+      res.status(201).json(result);
+    } catch (error) {
+      if (isContentFilterError(error)) {
+        return res.status(error.statusCode).json(error.body);
+      }
+      logger.error('Error duplicating conversation:', error);
+      res.status(500).send('Error duplicating conversation');
+    }
+  },
+);
 
 module.exports = router;

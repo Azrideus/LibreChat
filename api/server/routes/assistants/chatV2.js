@@ -1,17 +1,18 @@
 const express = require('express');
+const { createMessageFilterPii } = require('@librechat/api');
 
 const router = express.Router();
-const {
-  setHeaders,
-  handleAbort,
-  validateModel,
-  buildEndpointOption,
-} = require('~/server/middleware');
+const { handleAbort, validateModel, buildEndpointOption } = require('~/server/middleware');
 const validateConvoAccess = require('~/server/middleware/validate/convoAccess');
 const validateAssistant = require('~/server/middleware/assistants/validate');
 const chatController = require('~/server/controllers/assistants/chatV2');
 
 router.post('/abort', handleAbort());
+
+const filterMessageContent = createMessageFilterPii({
+  getConfig: (req) => req.config?.messageFilter?.pii,
+  getFilters: (req) => req.config?.filters,
+});
 
 /**
  * @route POST /
@@ -23,11 +24,11 @@ router.post('/abort', handleAbort());
  */
 router.post(
   '/',
+  filterMessageContent,
   validateModel,
   buildEndpointOption,
   validateAssistant,
   validateConvoAccess,
-  setHeaders,
   chatController,
 );
 

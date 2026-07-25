@@ -122,7 +122,6 @@ export class MCPManager extends UserConnectionManager {
    */
   public async discoverServerTools(args: t.ToolDiscoveryOptions): Promise<t.ToolDiscoveryResult> {
     const { serverName, user } = args;
-    const logPrefix = user?.id ? `[MCP][User: ${user.id}][${serverName}]` : `[MCP][${serverName}]`;
 
     try {
       const existingAppConnection = await this.appConnections?.get(serverName);
@@ -131,7 +130,7 @@ export class MCPManager extends UserConnectionManager {
         return { tools, oauthRequired: false, oauthUrl: null };
       }
     } catch {
-      logger.debug(`${logPrefix} [Discovery] App connection not available, trying discovery mode`);
+      logger.debug('[MCP][Discovery] App connection unavailable; trying discovery mode');
     }
 
     const serverConfig = await MCPServersRegistry.getInstance().getServerConfig(
@@ -141,7 +140,7 @@ export class MCPManager extends UserConnectionManager {
     );
 
     if (!serverConfig) {
-      logger.warn(`${logPrefix} [Discovery] Server config not found`);
+      logger.warn('[MCP][Discovery] Server configuration not found');
       return { tools: null, oauthRequired: false, oauthUrl: null };
     }
 
@@ -150,9 +149,9 @@ export class MCPManager extends UserConnectionManager {
       args.requestBody,
     );
     if (missingBodyFields.length > 0) {
-      logger.warn(
-        `${logPrefix} [Discovery] Request body field(s) required to resolve runtime MCP placeholders: ${missingBodyFields.join(', ')}`,
-      );
+      logger.warn('[MCP][Discovery] Runtime request fields are missing', {
+        missingBodyFieldCount: missingBodyFields.length,
+      });
       return { tools: null, oauthRequired: false, oauthUrl: null };
     }
 
@@ -167,7 +166,7 @@ export class MCPManager extends UserConnectionManager {
       graphTokenResolver: args.graphTokenResolver,
       allowedDomains,
       allowedAddresses,
-      logPrefix: `${logPrefix} [Discovery]`,
+      logPrefix: '[MCP][Discovery]',
     });
 
     const useOAuth = requiresOAuthMachinery(serverConfig);
@@ -187,8 +186,8 @@ export class MCPManager extends UserConnectionManager {
       if (result.connection) {
         try {
           await result.connection.disconnect();
-        } catch (error) {
-          logger.warn(`${logPrefix} [Discovery] Failed to disconnect discovery connection`, error);
+        } catch {
+          logger.warn('[MCP][Discovery] Failed to disconnect discovery connection');
         }
       }
       return {
@@ -210,7 +209,7 @@ export class MCPManager extends UserConnectionManager {
     }
 
     if (!user || !args.flowManager) {
-      logger.warn(`${logPrefix} [Discovery] OAuth server requires user and flowManager`);
+      logger.warn('[MCP][Discovery] OAuth server requires a user and flow manager');
       return { tools: null, oauthRequired: true, oauthUrl: null };
     }
 

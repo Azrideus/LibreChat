@@ -316,10 +316,9 @@ describe('ConnectionsRepository', () => {
 
       expect(mockConnection.disconnect).toHaveBeenCalled();
       expect(repository['connections'].has('server1')).toBe(false);
-      expect(mockLogger.error).toHaveBeenCalledWith(
-        '[MCP][server1] Error disconnecting',
-        disconnectError,
-      );
+      expect(mockLogger.error).toHaveBeenCalledWith('[MCP] Error disconnecting');
+      expect(JSON.stringify(mockLogger.error.mock.calls)).not.toContain(disconnectError.message);
+      expect(JSON.stringify(mockLogger.error.mock.calls)).not.toContain('server1');
     });
   });
 

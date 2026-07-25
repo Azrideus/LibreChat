@@ -1,4 +1,5 @@
 const { Constants } = require('librechat-data-provider');
+const { logger } = require('@librechat/data-schemas');
 
 const mockGetConnection = jest.fn();
 const mockDiscoverServerTools = jest.fn();
@@ -281,5 +282,40 @@ describe('reinitMCPServer — runtime BODY placeholder pre-check (issue #14074)'
     expect(mockDiscoverServerTools).not.toHaveBeenCalled();
     expect(result.success).toBe(false);
     expect(result.message).toBe(`Failed to reinitialize MCP server '${serverName}'`);
+  });
+});
+
+describe('reinitMCPServer — log hygiene', () => {
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  it('keeps user-created server and connection details out of discovery logs', async () => {
+    const serverName = 'PRIVATE-MCP-SERVER-NAME';
+    const privateUrl = 'https://private.example.test/PRIVATE-CONFIG-PATH';
+    const privateError = `PRIVATE-CONNECTION-ERROR for ${privateUrl}`;
+    const logSpies = ['debug', 'info', 'warn', 'error'].map((level) =>
+      jest.spyOn(logger, level).mockImplementation(() => {}),
+    );
+    mockGetConnection.mockRejectedValue(new Error(privateError));
+
+    const result = await reinitMCPServer({
+      user: { id: 'user-123' },
+      serverName,
+      serverConfig: { type: 'streamable-http', url: privateUrl },
+      userMCPAuthMap: undefined,
+    });
+
+    const loggedText = logSpies
+      .flatMap((spy) => spy.mock.calls)
+      .flat()
+      .map((value) => String(value))
+      .join('\n');
+
+    expect(result.message).toContain(serverName);
+    expect(loggedText).not.toContain(serverName);
+    expect(loggedText).not.toContain(privateUrl);
+    expect(loggedText).not.toContain(privateError);
+    expect(logger.error).toHaveBeenCalledWith('[MCP Reinitialize] Error initializing MCP server');
   });
 });

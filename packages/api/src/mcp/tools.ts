@@ -63,11 +63,8 @@ export function createMCPToolCacheService(deps: MCPToolCacheDeps): MCPToolCacheS
     try {
       const config = serverConfig ?? (await getServerConfig(serverName, userId));
       return config ? requiresEphemeralUserConnection(config) : false;
-    } catch (error) {
-      logger.debug(
-        `[MCP Cache] Could not resolve config for ${serverName} (user: ${userId}), treating as cacheable:`,
-        error,
-      );
+    } catch {
+      logger.debug('[MCP Cache] Could not resolve server configuration; treating as cacheable');
       return false;
     }
   }
@@ -84,7 +81,7 @@ export function createMCPToolCacheService(deps: MCPToolCacheDeps): MCPToolCacheS
       const mcpDelimiter = Constants.mcp_delimiter;
 
       if (tools == null || tools.length === 0) {
-        logger.debug(`[MCP Cache] No tools to update for server ${serverName} (user: ${userId})`);
+        logger.debug('[MCP Cache] No tools to update');
         return serverTools;
       }
 
@@ -102,22 +99,15 @@ export function createMCPToolCacheService(deps: MCPToolCacheDeps): MCPToolCacheS
       }
 
       if (await isRequestScoped(userId, serverName, serverConfig)) {
-        logger.debug(
-          `[MCP Cache] Built ${tools.length} tools for request-scoped server ${serverName} (user: ${userId}) without caching`,
-        );
+        logger.debug(`[MCP Cache] Built ${tools.length} request-scoped tool(s) without caching`);
         return serverTools;
       }
 
       await setCachedTools(serverTools, { userId, serverName });
-      logger.debug(
-        `[MCP Cache] Updated ${tools.length} tools for server ${serverName} (user: ${userId})`,
-      );
+      logger.debug(`[MCP Cache] Updated ${tools.length} server tool(s)`);
       return serverTools;
     } catch (error) {
-      logger.error(
-        `[MCP Cache] Failed to update tools for ${serverName} (user: ${userId}):`,
-        error,
-      );
+      logger.error('[MCP Cache] Failed to update server tools');
       throw error;
     }
   }
@@ -151,15 +141,13 @@ export function createMCPToolCacheService(deps: MCPToolCacheDeps): MCPToolCacheS
         return;
       }
       if (await isRequestScoped(userId, serverName, serverConfig)) {
-        logger.debug(
-          `[MCP Cache] Skipped caching ${count} tools for request-scoped server ${serverName} (user: ${userId})`,
-        );
+        logger.debug(`[MCP Cache] Skipped caching ${count} request-scoped tool(s)`);
         return;
       }
       await setCachedTools(serverTools, { userId, serverName });
-      logger.debug(`Cached ${count} MCP server tools for ${serverName} (user: ${userId})`);
+      logger.debug(`[MCP Cache] Cached ${count} server tool(s)`);
     } catch (error) {
-      logger.error(`Failed to cache MCP server tools for ${serverName} (user: ${userId}):`, error);
+      logger.error('[MCP Cache] Failed to cache server tools');
       throw error;
     }
   }
@@ -174,8 +162,8 @@ export function createMCPToolCacheService(deps: MCPToolCacheDeps): MCPToolCacheS
     }
     try {
       return (await getCachedTools({ userId, serverName })) ?? null;
-    } catch (error) {
-      logger.error(`[getMCPServerTools] Error fetching cached tools for ${serverName}:`, error);
+    } catch {
+      logger.error('[MCP Cache] Error fetching cached server tools');
       return null;
     }
   }

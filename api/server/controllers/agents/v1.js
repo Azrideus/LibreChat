@@ -1,4 +1,5 @@
 const { z } = require('zod');
+const { load } = require('js-yaml');
 const fs = require('fs').promises;
 const { nanoid } = require('nanoid');
 const { logger } = require('@librechat/data-schemas');
@@ -14,7 +15,16 @@ const {
   MAX_AVATAR_REFRESH_AGENTS,
   collectToolResourceFileIds,
   convertOcrToContextInPlace,
+  normalizeToolResourceFiles,
   stripFileIdsFromToolResources,
+  inspectContent,
+  extractAgentContent,
+  extractAssistantActionContent,
+  extractFileContent,
+  contentFilterBlockResponse,
+  contentFilterUninspectableResponse,
+  getBlockedOpaqueFileField,
+  getBlockedUninspectableFileField,
 } = require('@librechat/api');
 const {
   Time,
@@ -31,6 +41,7 @@ const {
   actionDelimiter,
   AgentCapabilities,
   EModelEndpoint,
+  openapiToFunction,
   removeNullishValues,
 } = require('librechat-data-provider');
 const {
@@ -69,6 +80,79 @@ const getSafeModelParameters = (modelParameters) => {
   return typeof useResponsesApi === 'boolean' ? { useResponsesApi } : {};
 };
 const hasEditBit = (permission) => (permission & PermissionBits.EDIT) === PermissionBits.EDIT;
+
+const blockFilteredActionContent = (req, res, actions) => {
+  const filters = req.config?.filters;
+  if (filters == null || actions.length === 0) {
+    return false;
+  }
+  const filterableActions = actions.map((action) => {
+    const rawSpec = action.metadata?.raw_spec;
+    if (typeof rawSpec !== 'string') {
+      return action;
+    }
+    let spec;
+    try {
+      spec = JSON.parse(rawSpec);
+    } catch {
+      try {
+        spec = load(rawSpec);
+      } catch {
+        return action;
+      }
+    }
+    if (
+      spec == null ||
+      typeof spec !== 'object' ||
+      !Array.isArray(spec.servers) ||
+      !spec.servers[0]?.url ||
+      spec.paths == null ||
+      typeof spec.paths !== 'object' ||
+      Object.keys(spec.paths).length === 0
+    ) {
+      return action;
+    }
+    try {
+      const { functionSignatures } = openapiToFunction(spec);
+      return { ...action, functions: functionSignatures };
+    } catch {
+      return action;
+    }
+  });
+  const finding = inspectContent(filterableActions.flatMap(extractAssistantActionContent), {
+    filters,
+  });
+  if (finding == null) {
+    return false;
+  }
+  res.status(400).json(contentFilterBlockResponse(finding));
+  return true;
+};
+
+const blockFilteredAgentContent = (req, res, agentData) => {
+  const filters = req.config?.filters;
+  if (filters == null) {
+    return false;
+  }
+  const avatarPath = agentData?.avatar?.filepath;
+  const uninspectableField = getBlockedOpaqueFileField(filters, agentData);
+  if (uninspectableField != null) {
+    res.status(400).json(contentFilterUninspectableResponse(uninspectableField));
+    return true;
+  }
+  const fileFragments =
+    typeof avatarPath === 'string' && !avatarPath.toLowerCase().startsWith('data:')
+      ? extractFileContent({ filepath: avatarPath })
+      : [];
+  const finding = inspectContent([...extractAgentContent(agentData), ...fileFragments], {
+    filters,
+  });
+  if (finding == null) {
+    return false;
+  }
+  res.status(400).json(contentFilterBlockResponse(finding));
+  return true;
+};
 
 const sanitizeViewerSkillScope = (agent, accessibleSkillSet) => {
   const skillScopeEnabled = agent.skills_enabled === true;
@@ -364,6 +448,11 @@ const createAgentHandler = async (req, res) => {
         true,
       );
     }
+    normalizeToolResourceFiles(agentData.tool_resources);
+
+    if (blockFilteredAgentContent(req, res, agentData)) {
+      return;
+    }
 
     const { id: userId, role: userRole } = req.user;
 
@@ -624,9 +713,14 @@ const updateAgentHandler = async (req, res) => {
         true,
       );
     }
+    normalizeToolResourceFiles(updateData.tool_resources);
 
     if (avatarField === null) {
       updateData.avatar = avatarField;
+    }
+
+    if (blockFilteredAgentContent(req, res, updateData)) {
+      return;
     }
 
     if (updateData.edges?.length) {
@@ -853,49 +947,14 @@ const duplicateAgentHandler = async (req, res) => {
       author: userId,
     });
 
-    const newActionsList = [];
     const originalActions = (await db.getActions({ agent_id: id }, true)) ?? [];
-    const promises = [];
-
-    /**
-     * Duplicates an action and returns the new action ID.
-     * @param {Action} action
-     * @returns {Promise<string>}
-     */
-    const duplicateAction = async (action) => {
-      const newActionId = nanoid();
-      const { domain } = action.metadata;
-      const fullActionId = `${domain}${actionDelimiter}${newActionId}`;
-
-      // Sanitize sensitive metadata before persisting
-      const filteredMetadata = { ...(action.metadata || {}) };
+    const sanitizedActions = originalActions.map((action) => {
+      const metadata = { ...(action.metadata || {}) };
       for (const field of sensitiveFields) {
-        delete filteredMetadata[field];
+        delete metadata[field];
       }
-
-      const newAction = await db.updateAction(
-        { action_id: newActionId, agent_id: newAgentId },
-        {
-          metadata: filteredMetadata,
-          agent_id: newAgentId,
-          user: userId,
-        },
-      );
-
-      newActionsList.push(newAction);
-      return fullActionId;
-    };
-
-    for (const action of originalActions) {
-      promises.push(
-        duplicateAction(action).catch((error) => {
-          logger.error('[/agents/:id/duplicate] Error duplicating Action:', error);
-        }),
-      );
-    }
-
-    const agentActions = await Promise.all(promises);
-    newAgentData.actions = agentActions;
+      return { ...action, metadata };
+    });
 
     if (newAgentData.tools?.length) {
       const [availableTools, configServers] = await Promise.all([
@@ -916,12 +975,54 @@ const duplicateAgentHandler = async (req, res) => {
     }
 
     if (newAgentData.tool_resources) {
+      normalizeToolResourceFiles(newAgentData.tool_resources);
       await pruneToolResourceFileIdsForAgent({
         tool_resources: newAgentData.tool_resources,
         ownerIds: userId,
         logPrefix: '[/Agents/:id/duplicate]',
       });
     }
+
+    if (
+      blockFilteredAgentContent(req, res, newAgentData) ||
+      blockFilteredActionContent(req, res, sanitizedActions)
+    ) {
+      return;
+    }
+
+    const newActionsList = [];
+
+    /**
+     * Duplicates an action and returns the new action ID.
+     * @param {Action} action
+     * @returns {Promise<string>}
+     */
+    const duplicateAction = async (action) => {
+      const newActionId = nanoid();
+      const { domain } = action.metadata;
+      const fullActionId = `${domain}${actionDelimiter}${newActionId}`;
+
+      const newAction = await db.updateAction(
+        { action_id: newActionId, agent_id: newAgentId },
+        {
+          metadata: action.metadata,
+          agent_id: newAgentId,
+          user: userId,
+        },
+      );
+
+      newActionsList.push(newAction);
+      return fullActionId;
+    };
+
+    const agentActions = await Promise.all(
+      sanitizedActions.map((action) =>
+        duplicateAction(action).catch((error) => {
+          logger.error('[/agents/:id/duplicate] Error duplicating Action:', error);
+        }),
+      ),
+    );
+    newAgentData.actions = agentActions;
 
     const newAgent = await db.createAgent(newAgentData);
 
@@ -1156,6 +1257,19 @@ const uploadAgentAvatarHandler = async (req, res) => {
       return res.status(400).json({ message: 'No file uploaded' });
     }
     filterFile({ req, file: req.file, image: true, isAvatar: true });
+    if (req.config?.filters?.files?.pii != null) {
+      const finding = inspectContent(extractFileContent({ name: req.file.originalname }), {
+        filters: req.config.filters,
+      });
+      if (finding != null) {
+        return res.status(400).json(contentFilterBlockResponse(finding));
+      }
+      const uninspectableField = getBlockedUninspectableFileField(req.config.filters, ['content']);
+      if (uninspectableField != null) {
+        return res.status(400).json(contentFilterUninspectableResponse(uninspectableField));
+      }
+    }
+
     const { agent_id } = req.params;
     if (!agent_id) {
       return res.status(400).json({ message: 'Agent ID is required' });
@@ -1268,52 +1382,79 @@ const revertAgentVersionHandler = async (req, res) => {
       return res.status(400).json({ error: 'version_index is required' });
     }
 
-    const existingAgent = await db.getAgent({ id });
-
-    if (!existingAgent) {
+    const [existingAgent, versions] = await Promise.all([
+      db.getAgent({ id }),
+      db.getAgentVersions({ id }),
+    ]);
+    if (!existingAgent || versions == null) {
       return res.status(404).json({ error: 'Agent not found' });
     }
 
     // Permissions are enforced via route middleware (ACL EDIT)
 
-    let updatedAgent = await db.revertAgentVersion({ id }, version_index);
-    const revertUpdates = {};
+    const selectedVersion = versions[version_index];
+    if (!selectedVersion) {
+      throw new Error(`Version ${version_index} not found`);
+    }
+    const {
+      _id: _versionId,
+      id: _agentId,
+      versions: _versions,
+      author: _author,
+      updatedBy: _updatedBy,
+      ...revertData
+    } = selectedVersion;
 
-    if (updatedAgent.tools?.length) {
+    if (revertData.tools?.length) {
       const [availableTools, configServers] = await Promise.all([
         getCachedTools().then((t) => t ?? {}),
         resolveConfigServers(req),
       ]);
       const mcpPermissionContext = createMCPPermissionContext(req);
       const filteredTools = await filterAuthorizedTools({
-        tools: updatedAgent.tools,
+        tools: revertData.tools,
         userId: req.user.id,
         role: req.user.role,
         user: req.user,
         mcpPermissionContext,
         availableTools,
-        existingTools: updatedAgent.tools,
+        existingTools: revertData.tools,
         configServers,
       });
-      if (filteredTools.length !== updatedAgent.tools.length) {
-        revertUpdates.tools = filteredTools;
-      }
+      revertData.tools = filteredTools;
     }
 
-    if (updatedAgent.tool_resources) {
-      const removedCount = await pruneToolResourceFileIdsForAgent({
-        tool_resources: updatedAgent.tool_resources,
+    if (revertData.tool_resources) {
+      normalizeToolResourceFiles(revertData.tool_resources);
+      await pruneToolResourceFileIdsForAgent({
+        tool_resources: revertData.tool_resources,
         ownerIds: req.user.id,
-        existingToolResources: updatedAgent.tool_resources,
+        existingToolResources: existingAgent.tool_resources,
         logPrefix: '[/Agents/:id/revert]',
       });
-      if (removedCount > 0) {
-        revertUpdates.tool_resources = updatedAgent.tool_resources;
-      }
     }
 
-    if (Object.keys(revertUpdates).length > 0) {
-      updatedAgent = await db.updateAgent({ id }, revertUpdates, { updatingUserId: req.user.id });
+    const actionIds = (revertData.actions ?? [])
+      .map((action) => (typeof action === 'string' ? action.split(actionDelimiter)[1] : undefined))
+      .filter(Boolean);
+    const actions =
+      actionIds.length > 0
+        ? ((await db.getActions({ agent_id: id, action_id: { $in: actionIds } }, true)) ?? [])
+        : [];
+
+    if (
+      blockFilteredAgentContent(req, res, revertData) ||
+      blockFilteredActionContent(req, res, actions)
+    ) {
+      return;
+    }
+
+    const updatedAgent = await db.updateAgent({ id }, revertData, {
+      updatingUserId: req.user.id,
+      skipVersioning: true,
+    });
+    if (!updatedAgent) {
+      throw new Error('Agent not found');
     }
 
     if (updatedAgent.author) {

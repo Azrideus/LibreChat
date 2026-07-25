@@ -71,8 +71,8 @@ export async function cleanupMCPRequestContext(context?: MCPRequestContext): Pro
     Array.from(connections).map(async (connection) => {
       try {
         await connection.disconnect();
-      } catch (error) {
-        logger.warn('[MCP Request Context] Failed to disconnect request-scoped connection', error);
+      } catch {
+        logger.warn('[MCP Request Context] Failed to disconnect request-scoped connection');
       }
     }),
   );
@@ -86,8 +86,8 @@ function isResponseFinished(res?: MCPResponseLike): boolean {
 }
 
 function runCleanup(context: MCPRequestContext): void {
-  cleanupMCPRequestContext(context).catch((error) => {
-    logger.warn('[MCP Request Context] Cleanup failed', error);
+  cleanupMCPRequestContext(context).catch(() => {
+    logger.warn('[MCP Request Context] Cleanup failed');
   });
 }
 

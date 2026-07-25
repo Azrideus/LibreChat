@@ -15,11 +15,12 @@ import { fileConfigSchema } from './file-config';
 import { apiBaseUrl } from './api-endpoints';
 import { FileSources } from './types/files';
 import { MCPServersSchema } from './mcp';
+import { filtersConfigSchema } from './filters';
 export { MAX_SUBAGENTS } from './limits';
 
 export const defaultSocialLogins = ['google', 'facebook', 'openid', 'github', 'discord', 'saml'];
 
-export const BASE_ONLY_CONFIG_SECTIONS = [] as const;
+export const BASE_ONLY_CONFIG_SECTIONS = ['filters'] as const;
 
 export const defaultRetrievalModels = [
   'gpt-4o',
@@ -1809,23 +1810,25 @@ export type SummarizationConfig = z.infer<typeof summarizationConfigSchema>;
 
 const customEndpointsSchema = z.array(endpointSchema.partial()).optional();
 
+const legacyMessageFilterRegexSchema = z
+  .string()
+  .min(1)
+  .refine(
+    (value) => {
+      try {
+        new RegExp(value, 'g');
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    { message: 'Invalid regex' },
+  );
+
 const messageFilterPiiCustomPatternSchema = z.object({
   id: z.string().min(1),
   label: z.string().min(1),
-  regex: z
-    .string()
-    .min(1)
-    .refine(
-      (value) => {
-        try {
-          new RegExp(value, 'g');
-          return true;
-        } catch {
-          return false;
-        }
-      },
-      { message: 'Invalid regex' },
-    ),
+  regex: legacyMessageFilterRegexSchema,
 });
 
 export const messageFilterPiiSchema = z.object({
@@ -1908,6 +1911,7 @@ export const configSchema = z.object({
   rateLimits: rateLimitSchema.optional(),
   fileConfig: fileConfigSchema.optional(),
   modelSpecs: specsConfigSchema.optional(),
+  filters: filtersConfigSchema.optional(),
   messageFilter: messageFilterSchema.optional(),
   endpoints: z
     .object({

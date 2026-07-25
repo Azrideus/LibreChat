@@ -12,6 +12,7 @@ const {
   encodeAndFormatAudios,
   encodeAndFormatVideos,
   encodeAndFormatDocuments,
+  assertModelBoundContent,
 } = require('@librechat/api');
 const {
   Constants,
@@ -64,6 +65,26 @@ const collectHistoricalFileIds = (messages) => {
     }
   }
   return Array.from(fileIds);
+};
+
+const collectHistoricalSteerFileIds = (messages) => {
+  const fileIds = new Set();
+  for (const message of messages) {
+    if (!Array.isArray(message.content)) {
+      continue;
+    }
+    for (const part of message.content) {
+      if (part?.type !== ContentTypes.STEER || !Array.isArray(part.files)) {
+        continue;
+      }
+      for (const file of part.files) {
+        if (file?.file_id) {
+          fileIds.add(file.file_id);
+        }
+      }
+    }
+  }
+  return fileIds;
 };
 
 const buildOwnerFileFilter = (fileIds, user) => {
@@ -1467,6 +1488,13 @@ class BaseClient {
         }
       }
     }
+    const historicalSteerFiles = [...collectHistoricalSteerFileIds(_messages)]
+      .map((fileId) => authorizedFilesById.get(fileId))
+      .filter(Boolean);
+    assertModelBoundContent({
+      filters: this.options.req?.config?.filters,
+      files: historicalSteerFiles,
+    });
     /** Owner-scoped docs for THIS turn, including steer-part refs — the steer
      *  replay stamp consumes this instead of issuing a second query. */
     this.authorizedHistoricalFiles = authorizedFilesById;
@@ -1521,6 +1549,10 @@ class BaseClient {
         return message;
       }
 
+      assertModelBoundContent({
+        filters: this.options.req?.config?.filters,
+        files: contextFiles,
+      });
       await this.addFileContextToMessage(message, contextFiles);
       await this.processAttachments(message, contextFiles);
 

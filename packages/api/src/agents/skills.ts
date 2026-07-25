@@ -200,18 +200,13 @@ export async function resolveModelSpecSkillIds({
         preferModelInvocable: true,
       });
       if (!skill) {
-        logger.warn(
-          `[resolveModelSpecSkillIds] Skill "${name}" not found or not accessible for this user`,
-        );
+        logger.warn('[resolveModelSpecSkillIds] Requested skill not found or not accessible');
         resolved.push(null);
         continue;
       }
       resolved.push(skill._id);
-    } catch (err) {
-      logger.warn(
-        `[resolveModelSpecSkillIds] Failed to resolve skill "${name}":`,
-        err instanceof Error ? err.message : err,
-      );
+    } catch {
+      logger.warn('[resolveModelSpecSkillIds] Failed to resolve a requested skill');
       resolved.push(null);
     }
   }
@@ -754,15 +749,8 @@ export async function resolveManualSkills(
    */
   let boundedNames = uniqueNames;
   if (uniqueNames.length > MAX_MANUAL_SKILLS) {
-    const droppedAll = uniqueNames.slice(MAX_MANUAL_SKILLS);
-    const DROPPED_LOG_SAMPLE = 5;
-    const droppedSample = droppedAll.slice(0, DROPPED_LOG_SAMPLE).join(', ');
-    const droppedSuffix =
-      droppedAll.length > DROPPED_LOG_SAMPLE
-        ? `, ... (${droppedAll.length - DROPPED_LOG_SAMPLE} more)`
-        : '';
     logger.warn(
-      `[resolveManualSkills] Truncating manual skill list from ${uniqueNames.length} to ${MAX_MANUAL_SKILLS}: dropped [${droppedSample}${droppedSuffix}]`,
+      `[resolveManualSkills] Truncating manual skill list from ${uniqueNames.length} to ${MAX_MANUAL_SKILLS}`,
     );
     boundedNames = uniqueNames.slice(0, MAX_MANUAL_SKILLS);
   }
@@ -784,7 +772,7 @@ export async function resolveManualSkills(
           preferUserInvocable: true,
         });
         if (!skill) {
-          logger.warn(`[resolveManualSkills] Skill "${name}" not found or not accessible`);
+          logger.warn('[resolveManualSkills] Requested skill not found or not accessible');
           return null;
         }
         /**
@@ -802,11 +790,11 @@ export async function resolveManualSkills(
          * operators triage faster.
          */
         if (skill.userInvocable === false) {
-          logger.warn(`[resolveManualSkills] Skill "${name}" is not user-invocable — skipping`);
+          logger.warn('[resolveManualSkills] Requested skill is not user-invocable — skipping');
           return null;
         }
         if (!skill.body) {
-          logger.warn(`[resolveManualSkills] Skill "${name}" has empty body — skipping`);
+          logger.warn('[resolveManualSkills] Requested skill has empty body — skipping');
           return null;
         }
         const active = resolveSkillActive({
@@ -816,7 +804,7 @@ export async function resolveManualSkills(
           defaultActiveOnShare,
         });
         if (!active) {
-          logger.warn(`[resolveManualSkills] Skill "${name}" is inactive for this user — skipping`);
+          logger.warn('[resolveManualSkills] Requested skill is inactive for this user — skipping');
           return null;
         }
         const resolved: ResolvedManualSkill = {
@@ -828,11 +816,8 @@ export async function resolveManualSkills(
           resolved.allowedTools = skill.allowedTools;
         }
         return resolved;
-      } catch (err) {
-        logger.warn(
-          `[resolveManualSkills] Failed to resolve skill "${name}":`,
-          err instanceof Error ? err.message : err,
-        );
+      } catch {
+        logger.warn('[resolveManualSkills] Failed to resolve a requested skill');
         return null;
       }
     }),
@@ -955,7 +940,7 @@ export async function resolveAlwaysApplySkills(
         break;
       }
       if (!skill.body) {
-        logger.warn(`[resolveAlwaysApplySkills] Skill "${skill.name}" has empty body — skipping`);
+        logger.warn('[resolveAlwaysApplySkills] Skill has empty body — skipping');
         continue;
       }
       const active = resolveSkillActive({

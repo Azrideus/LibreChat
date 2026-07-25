@@ -23,7 +23,6 @@ import type * as t from './types';
 import { createSSRFSafeUndiciConnect, isSSRFTarget, resolveHostnameSSRF } from '~/auth';
 import { runOutsideTracing } from '~/utils/tracing';
 import { isAddressAllowed } from '~/auth/domain';
-import { sanitizeUrlForLogging } from './utils';
 import { withTimeout } from '~/utils/promise';
 import { mcpConfig } from './mcpConfig';
 
@@ -332,9 +331,7 @@ async function guardMCPStreamableHTTPResponse(
     });
     logger.warn(`${context.logPrefix} MCP streamable HTTP response blocked: ${reason}`, {
       method: context.method,
-      url: sanitizeUrlForLogging(context.url),
       status: response.status,
-      contentType,
       maxResponseBytes,
       maxLineBytes,
       totalBytes,
@@ -1163,7 +1160,7 @@ export class MCPConnection extends EventEmitter {
 
   public static clearCooldown(serverName: string): void {
     MCPConnection.circuitBreakers.delete(serverName);
-    logger.debug(`[MCP][${serverName}] Circuit breaker state cleared`);
+    logger.debug('[MCP] Circuit breaker state cleared');
   }
 
   private getCircuitBreaker(): CircuitBreakerState {
@@ -1289,7 +1286,7 @@ export class MCPConnection extends EventEmitter {
   /** Helper to generate consistent log prefixes */
   private getLogPrefix(): string {
     const userPart = this.userId ? `[User: ${this.userId}]` : '';
-    return `[MCP]${userPart}[${this.serverName}]`;
+    return `[MCP]${userPart}`;
   }
 
   /**
@@ -1468,9 +1465,7 @@ export class MCPConnection extends EventEmitter {
          * an SSRF amplification primitive.
          */
         if (isSSRFTarget(targetUrl.hostname) || (await resolveHostnameSSRF(targetUrl.hostname))) {
-          logger.warn(
-            `[MCP] Blocked redirect to private/reserved address: ${sanitizeUrlForLogging(targetUrl)}`,
-          );
+          logger.warn('[MCP] Blocked redirect to private or reserved address');
           return response;
         }
 
@@ -1523,9 +1518,8 @@ export class MCPConnection extends EventEmitter {
     };
   }
 
-  private emitError(error: unknown, errorContext: string): void {
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    logger.error(`${this.getLogPrefix()} ${errorContext}: ${errorMessage}`);
+  private emitError(_error: unknown, errorContext: string): void {
+    logger.error(`${this.getLogPrefix()} ${errorContext}`);
   }
 
   private async constructTransport(options: t.MCPOptions): Promise<Transport> {
@@ -1594,9 +1588,7 @@ export class MCPConnection extends EventEmitter {
           }
           this.url = options.url;
           const url = new URL(options.url);
-          logger.info(
-            `${this.getLogPrefix()} Creating SSE transport: ${sanitizeUrlForLogging(url)}`,
-          );
+          logger.info(`${this.getLogPrefix()} Creating SSE transport`);
           const abortController = new AbortController();
 
           /** Add OAuth token to headers if available */
@@ -1697,9 +1689,7 @@ export class MCPConnection extends EventEmitter {
           }
           this.url = options.url;
           const url = new URL(options.url);
-          logger.info(
-            `${this.getLogPrefix()} Creating streamable-http transport: ${sanitizeUrlForLogging(url)}`,
-          );
+          logger.info(`${this.getLogPrefix()} Creating streamable-http transport`);
           const abortController = new AbortController();
 
           /** Add OAuth token to headers if available */
@@ -1766,8 +1756,8 @@ export class MCPConnection extends EventEmitter {
          * //  });
          */
       } else if (state === 'error' && !this.isReconnecting && !this.isInitializing) {
-        this.handleReconnection().catch((error) => {
-          logger.error(`${this.getLogPrefix()} Reconnection handler failed:`, error);
+        this.handleReconnection().catch(() => {
+          logger.error(`${this.getLogPrefix()} Reconnection handler failed`);
         });
       }
     });
@@ -1814,7 +1804,7 @@ export class MCPConnection extends EventEmitter {
           this.reconnectAttempts = 0;
           return;
         } catch (error) {
-          logger.error(`${this.getLogPrefix()} Reconnection attempt failed:`, error);
+          logger.error(`${this.getLogPrefix()} Reconnection attempt failed`);
 
           // Stop immediately if rate limited - retrying will only make it worse
           if (this.isRateLimitError(error)) {
@@ -1881,8 +1871,8 @@ export class MCPConnection extends EventEmitter {
           try {
             await this.terminateStreamableSession();
             await this.client.close();
-          } catch (error) {
-            logger.warn(`${this.getLogPrefix()} Error closing connection:`, error);
+          } catch {
+            logger.warn(`${this.getLogPrefix()} Error closing connection`);
           }
           this.transport = null;
           await this.closeAgents();
@@ -1937,9 +1927,9 @@ export class MCPConnection extends EventEmitter {
           logger.warn(`${this.getLogPrefix()} OAuth authentication required`);
           this.oauthRequired = true;
           const serverUrl = this.url;
-          logger.debug(
-            `${this.getLogPrefix()} Server URL for OAuth: ${serverUrl ? sanitizeUrlForLogging(serverUrl) : 'undefined'}`,
-          );
+          logger.debug(`${this.getLogPrefix()} OAuth server URL state`, {
+            hasServerUrl: Boolean(serverUrl),
+          });
 
           const oauthTimeout = mcpConfig.OAUTH_HANDLING_TIMEOUT;
           /** Promise that will resolve when OAuth is handled */
@@ -2001,10 +1991,10 @@ export class MCPConnection extends EventEmitter {
               `${this.getLogPrefix()} OAuth handled successfully, connection will be retried`,
             );
             return;
-          } catch (oauthError) {
+          } catch {
             // OAuth failed or timed out
             this.oauthRequired = false;
-            logger.error(`${this.getLogPrefix()} OAuth handling failed:`, oauthError);
+            logger.error(`${this.getLogPrefix()} OAuth handling failed`);
             // Re-throw the original authentication error
             throw error;
           }
@@ -2074,7 +2064,7 @@ export class MCPConnection extends EventEmitter {
         throw new Error('Connection not established');
       }
     } catch (error) {
-      logger.error(`${this.getLogPrefix()} Connection failed:`, error);
+      logger.error(`${this.getLogPrefix()} Connection failed`);
       throw error;
     }
   }
@@ -2097,7 +2087,7 @@ export class MCPConnection extends EventEmitter {
         rawMessage.startsWith(SDK_SSE_STREAM_DISCONNECTED) ||
         rawMessage.startsWith(SDK_SSE_RECONNECT_FAILED)
       ) {
-        logger.debug(`${this.getLogPrefix()} SDK SSE stream recovery in progress: ${rawMessage}`);
+        logger.debug(`${this.getLogPrefix()} SDK SSE stream recovery in progress`);
         return;
       }
 
@@ -2153,31 +2143,11 @@ export class MCPConnection extends EventEmitter {
         errorContext.hint = 'Check Nginx/proxy configuration for SSE endpoints';
       }
 
-      // Extract additional debug info from SseError if available
-      if (error && typeof error === 'object') {
-        const sseError = error as { event?: unknown; stack?: string };
-
-        // Include the original eventsource event for debugging
-        if (sseError.event && typeof sseError.event === 'object') {
-          const event = sseError.event as { code?: number; message?: string; type?: string };
-          errorContext.eventDetails = {
-            type: event.type,
-            code: event.code,
-            message: event.message,
-          };
-        }
-
-        // Include stack trace if available
-        if (sseError.stack) {
-          errorContext.stack = sseError.stack;
-        }
-      }
-
       const errorLabel = isTransient
         ? 'Transport error (transient, will reconnect)'
         : 'Transport error (may require manual intervention)';
 
-      logger.error(`${this.getLogPrefix()} ${errorLabel}: ${errorMessage}`, errorContext);
+      logger.error(`${this.getLogPrefix()} ${errorLabel}`, errorContext);
 
       this.emit('connectionChange', 'error');
     };
@@ -2186,8 +2156,8 @@ export class MCPConnection extends EventEmitter {
   private async closeAgents(force = false): Promise<void> {
     const logPrefix = this.getLogPrefix();
     const closing = this.agents.map((agent) =>
-      (force ? agent.destroy() : agent.close()).catch((err: unknown) => {
-        logger.debug(`${logPrefix} Agent close error (non-fatal):`, err);
+      (force ? agent.destroy() : agent.close()).catch(() => {
+        logger.debug(`${logPrefix} Agent close error (non-fatal)`);
       }),
     );
     this.agents = [];
@@ -2225,8 +2195,8 @@ export class MCPConnection extends EventEmitter {
         SESSION_TERMINATION_TIMEOUT,
         `Streamable HTTP session termination timed out after ${SESSION_TERMINATION_TIMEOUT}ms`,
       );
-    } catch (error) {
-      logger.debug(`${this.getLogPrefix()} Error terminating streamable HTTP session:`, error);
+    } catch {
+      logger.debug(`${this.getLogPrefix()} Error terminating streamable HTTP session`);
     }
   }
 
@@ -2421,7 +2391,7 @@ export class MCPConnection extends EventEmitter {
           (error as Error)?.message.includes('method not found'));
 
       if (!pingUnsupported) {
-        logger.error(`${this.getLogPrefix()} Ping failed:`, error);
+        logger.error(`${this.getLogPrefix()} Ping failed`);
         return false;
       }
 
@@ -2451,9 +2421,9 @@ export class MCPConnection extends EventEmitter {
           );
           return this.connectionState === 'connected';
         }
-      } catch (capabilityError) {
+      } catch {
         // If capability check fails, the connection is likely broken
-        logger.error(`${this.getLogPrefix()} Connection verification failed:`, capabilityError);
+        logger.error(`${this.getLogPrefix()} Connection verification failed`);
         return false;
       }
     }

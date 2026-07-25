@@ -8,6 +8,12 @@ const {
   sendFeedbackScore,
   traceIdForMessage,
   mergeQuotedTextForCount,
+  inspectContent,
+  createContentFilter,
+  extractChatContent,
+  extractFeedbackContent,
+  extractStoredMessageContent,
+  contentFilterBlockResponse,
 } = require('@librechat/api');
 const { findAllArtifacts, replaceArtifactContent } = require('~/server/services/Artifacts/update');
 const {
@@ -20,6 +26,51 @@ const {
 const db = require('~/models');
 
 const router = express.Router();
+const filterStoredMessageContent = createContentFilter({
+  getFilters: (req) => req.config?.filters,
+  getMessageRoles: (req) => [req.body?.role],
+  getOpaqueFileInput: (req) => req.body,
+  extract: (req) => extractStoredMessageContent(req.body),
+});
+const filterFeedbackContent = createContentFilter({
+  getFilters: (req) => req.config?.filters,
+  extract: (req) => extractFeedbackContent(req.body),
+});
+const messageMutationMiddleware = [validateMessageReq, configMiddleware];
+const storedMessageMutationMiddleware = [
+  validateMessageReq,
+  configMiddleware,
+  filterStoredMessageContent,
+];
+
+const blockFilteredMessageContent = (req, res, messageData) => {
+  const filters = req.config?.filters;
+  if (filters == null) {
+    return false;
+  }
+  const finding = inspectContent(extractStoredMessageContent(messageData), {
+    filters,
+  });
+  if (finding == null) {
+    return false;
+  }
+  res.status(400).json(contentFilterBlockResponse(finding));
+  return true;
+};
+
+const blockFilteredChatContent = (req, res, chatData) => {
+  const filters = req.config?.filters;
+  if (filters == null) {
+    return false;
+  }
+  const finding = inspectContent(extractChatContent(chatData), { filters });
+  if (finding == null) {
+    return false;
+  }
+  res.status(400).json(contentFilterBlockResponse(finding));
+  return true;
+};
+
 router.use(requireJwtAuth);
 
 router.get('/', async (req, res) => {
@@ -196,13 +247,17 @@ router.post('/branch', async (req, res) => {
   }
 });
 
-router.post('/artifact/:messageId', async (req, res) => {
+router.post('/artifact/:messageId', configMiddleware, async (req, res) => {
   try {
     const { messageId } = req.params;
     const { index, original, updated } = req.body;
 
     if (typeof index !== 'number' || index < 0 || original == null || updated == null) {
       return res.status(400).json({ error: 'Invalid request parameters' });
+    }
+
+    if (blockFilteredMessageContent(req, res, { original, updated })) {
+      return;
     }
 
     const message = await db.getMessage({ user: req.user.id, messageId });
@@ -248,6 +303,14 @@ router.post('/artifact/:messageId', async (req, res) => {
 
     if (!updatedText) {
       return res.status(400).json({ error: 'Original content not found in target artifact' });
+    }
+
+    const filteredArtifact =
+      targetArtifact.source === 'content'
+        ? { content: [{ text: updatedText }] }
+        : { text: updatedText };
+    if (blockFilteredMessageContent(req, res, filteredArtifact)) {
+      return;
     }
 
     const savedMessage = await db.saveMessage(
@@ -308,7 +371,7 @@ router.get('/:conversationId', prepareMessageRequestValidation, async (req, res)
   }
 });
 
-router.post('/:conversationId', validateMessageReq, async (req, res) => {
+router.post('/:conversationId', storedMessageMutationMiddleware, async (req, res) => {
   try {
     const message = { ...req.body, conversationId: req.params.conversationId };
     const reqCtx = {
@@ -349,12 +412,20 @@ router.get('/:conversationId/:messageId', validateMessageReq, async (req, res) =
   }
 });
 
-router.put('/:conversationId/:messageId', validateMessageReq, async (req, res) => {
+router.put('/:conversationId/:messageId', messageMutationMiddleware, async (req, res) => {
   try {
     const { conversationId, messageId } = req.params;
     const { text, index, model } = req.body;
 
+    if (index !== undefined && (typeof index !== 'number' || index < 0)) {
+      return res.status(400).json({ error: 'Invalid index' });
+    }
+
     if (index === undefined) {
+      if (blockFilteredMessageContent(req, res, { text })) {
+        return;
+      }
+
       /** A user turn's persisted `quotes` are re-prepended into the prompt on
        *  every send, but this edit only changes `text`. Count the merged
        *  text+quotes so the stored `tokenCount` stays authoritative (matching the
@@ -370,13 +441,17 @@ router.put('/:conversationId/:messageId', validateMessageReq, async (req, res) =
         existing?.quotes,
         existing?.isCreatedByUser === true,
       );
+      if (
+        blockFilteredChatContent(req, res, {
+          text,
+          quotes: existing?.isCreatedByUser === true ? existing.quotes : undefined,
+        })
+      ) {
+        return;
+      }
       const tokenCount = await countTokens(textToCount, model);
       const result = await db.updateMessage(req?.user?.id, { messageId, text, tokenCount });
       return res.status(200).json(result);
-    }
-
-    if (typeof index !== 'number' || index < 0) {
-      return res.status(400).json({ error: 'Invalid index' });
     }
 
     const message = (
@@ -401,8 +476,19 @@ router.put('/:conversationId/:messageId', validateMessageReq, async (req, res) =
       return res.status(400).json({ error: 'Cannot update non-text content' });
     }
 
+    if (
+      blockFilteredMessageContent(req, res, {
+        content: [{ [currentPartType]: text }],
+      })
+    ) {
+      return;
+    }
+
     const oldText = updatedContent[index][currentPartType];
     updatedContent[index] = { type: currentPartType, [currentPartType]: text };
+    if (blockFilteredMessageContent(req, res, { content: updatedContent })) {
+      return;
+    }
 
     let tokenCount = message.tokenCount;
     if (tokenCount !== undefined) {
@@ -427,6 +513,7 @@ router.put(
   '/:conversationId/:messageId/feedback',
   validateMessageReq,
   configMiddleware,
+  filterFeedbackContent,
   async (req, res) => {
     try {
       const { conversationId, messageId } = req.params;

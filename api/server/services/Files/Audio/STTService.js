@@ -3,7 +3,16 @@ const fs = require('fs').promises;
 const FormData = require('form-data');
 const { Readable } = require('stream');
 const { logger } = require('@librechat/data-schemas');
-const { genAzureEndpoint, logAxiosError, applyAxiosProxyConfig } = require('@librechat/api');
+const {
+  inspectContent,
+  extractFileContent,
+  genAzureEndpoint,
+  logAxiosError,
+  applyAxiosProxyConfig,
+  contentFilterBlockResponse,
+  contentFilterUninspectableResponse,
+  getBlockedUninspectableFileField,
+} = require('@librechat/api');
 const { extractEnvVariable, STTProviders } = require('librechat-data-provider');
 const { getAppConfig } = require('~/server/services/Config');
 
@@ -334,17 +343,43 @@ class STTService {
       return res.status(400).json({ message: 'No audio file provided in the FormData' });
     }
 
-    const audioBuffer = await fs.readFile(req.file.path);
-    const audioFile = {
-      originalname: req.file.originalname,
-      mimetype: req.file.mimetype,
-      size: req.file.size,
-    };
-
     try {
+      if (req.config?.filters?.files?.pii != null) {
+        const finding = inspectContent(extractFileContent({ name: req.file.originalname }), {
+          filters: req.config.filters,
+        });
+        if (finding != null) {
+          res.status(400).json(contentFilterBlockResponse(finding));
+          return;
+        }
+        const uninspectableField = getBlockedUninspectableFileField(req.config.filters, [
+          'content',
+          'transcript',
+        ]);
+        if (uninspectableField != null) {
+          res.status(400).json(contentFilterUninspectableResponse(uninspectableField));
+          return;
+        }
+      }
+
+      const audioBuffer = await fs.readFile(req.file.path);
+      const audioFile = {
+        originalname: req.file.originalname,
+        mimetype: req.file.mimetype,
+        size: req.file.size,
+      };
       const [provider, sttSchema] = await this.getProviderSchema(req);
       const language = req.body?.language || '';
       const text = await this.sttRequest(provider, sttSchema, { audioBuffer, audioFile, language });
+      if (req.config?.filters?.files?.pii != null) {
+        const finding = inspectContent(extractFileContent({ transcript: text }), {
+          filters: req.config.filters,
+        });
+        if (finding != null) {
+          res.status(400).json(contentFilterBlockResponse(finding));
+          return;
+        }
+      }
       res.json({ text });
     } catch (error) {
       logAxiosError({ message: 'An error occurred while processing the audio:', error });

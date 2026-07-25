@@ -271,9 +271,13 @@ router.get('/chat/status/:conversationId', async (req, res) => {
 router.post('/chat/abort', configMiddleware, async (req, res) => {
   logger.debug(`[AgentStream] ========== ABORT ENDPOINT HIT ==========`);
   logger.debug(`[AgentStream] Method: ${req.method}, Path: ${req.path}`);
-  logger.debug(`[AgentStream] Body:`, req.body);
 
   const { streamId, conversationId, abortKey } = req.body;
+  logger.debug(`[AgentStream] Abort request`, {
+    conversationId,
+    hasStreamId: typeof streamId === 'string' && streamId.length > 0,
+    hasAbortKey: typeof abortKey === 'string' && abortKey.length > 0,
+  });
   const userId = req.user?.id;
 
   // streamId === conversationId, so try any of the provided IDs
@@ -442,7 +446,10 @@ router.post(
   '/chat/steer',
   configMiddleware,
   ...steerLimiters,
-  createMessageFilterPii({ getConfig: (req) => req.config?.messageFilter?.pii }),
+  createMessageFilterPii({
+    getConfig: (req) => req.config?.messageFilter?.pii,
+    getFilters: (req) => req.config?.filters,
+  }),
   moderateText,
   SteerController,
 );

@@ -14,6 +14,7 @@ const {
   resolveAgentTokenConfig,
   resolveAgentScopedSkillIds,
   resolveModelSpecSkillIds,
+  isContentFilterError,
   buildAgentContextAttachmentsByAgentId,
 } = require('@librechat/api');
 const {
@@ -99,6 +100,9 @@ function createToolLoader(signal, streamId = null, definitionsOnly = false) {
         definitionsOnly,
       });
     } catch (error) {
+      if (isContentFilterError(error)) {
+        throw error;
+      }
       logger.error('Error loading tools for agent ' + agentId, error);
     }
   };

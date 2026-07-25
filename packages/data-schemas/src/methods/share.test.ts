@@ -327,6 +327,46 @@ describe('Share Methods', () => {
       const shares = await SharedLink.find({ conversationId });
       expect(shares).toHaveLength(0);
     });
+
+    test('runs content preflight before creating any shared-link record', async () => {
+      const userId = new mongoose.Types.ObjectId().toString();
+      const conversationId = `conv_${nanoid()}`;
+      const rejection = new Error('blocked by current policy');
+
+      await Conversation.create({
+        conversationId,
+        title: 'Protected Conversation',
+        user: userId,
+      });
+      await Message.create({
+        messageId: `msg_${nanoid()}`,
+        conversationId,
+        user: userId,
+        text: 'PRIVATE-SENTINEL',
+        isCreatedByUser: true,
+      });
+
+      const preflight = jest.fn(async (snapshot) => {
+        expect(snapshot.title).toBe('Protected Conversation');
+        expect(snapshot.messages).toHaveLength(1);
+        expect(snapshot.messages[0]?.text).toBe('PRIVATE-SENTINEL');
+        throw rejection;
+      });
+
+      await expect(
+        shareMethods.createSharedLink(
+          userId,
+          conversationId,
+          undefined,
+          undefined,
+          true,
+          preflight,
+        ),
+      ).rejects.toBe(rejection);
+
+      expect(preflight).toHaveBeenCalledTimes(1);
+      expect(await SharedLink.countDocuments({ conversationId })).toBe(0);
+    });
   });
 
   describe('getSharedMessages', () => {
@@ -1190,6 +1230,44 @@ describe('Share Methods', () => {
       const originalShare = await SharedLink.findOne({ shareId });
       expect(originalShare).toBeDefined();
       expect(originalShare?.user).toBe(ownerUserId);
+    });
+
+    test('runs content preflight before mutating a shared-link record', async () => {
+      const userId = new mongoose.Types.ObjectId().toString();
+      const conversationId = `conv_${nanoid()}`;
+      const shareId = `share_${nanoid()}`;
+      const rejection = new Error('blocked by current policy');
+
+      await SharedLink.create({
+        shareId,
+        conversationId,
+        title: 'Protected Share',
+        user: userId,
+        messages: [],
+      });
+      await Message.create({
+        messageId: `msg_${nanoid()}`,
+        conversationId,
+        user: userId,
+        text: 'PRIVATE-SENTINEL',
+        isCreatedByUser: true,
+      });
+
+      const preflight = jest.fn(async (snapshot) => {
+        expect(snapshot.title).toBe('Protected Share');
+        expect(snapshot.messages).toHaveLength(1);
+        expect(snapshot.messages[0]?.text).toBe('PRIVATE-SENTINEL');
+        throw rejection;
+      });
+
+      await expect(
+        shareMethods.updateSharedLink(userId, shareId, undefined, undefined, true, preflight),
+      ).rejects.toBe(rejection);
+
+      expect(preflight).toHaveBeenCalledTimes(1);
+      expect(await SharedLink.countDocuments({ conversationId })).toBe(1);
+      const untouched = await SharedLink.findOne({ shareId }).lean();
+      expect(untouched?.messages).toHaveLength(0);
     });
   });
 

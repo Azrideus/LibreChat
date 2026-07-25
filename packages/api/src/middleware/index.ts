@@ -17,5 +17,7 @@ export * from './concurrency';
 export * from './checkBalance';
 export * from './remoteAgentAuth';
 export * from './share';
+export * from './contentFilter';
+export * from './modelBoundContent';
 export * from './messageFilterPii';
 export * from './messageValidation';

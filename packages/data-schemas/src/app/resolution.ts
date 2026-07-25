@@ -61,6 +61,10 @@ function remapOverridePath(path: string): string {
   return [mappedFirst, ...rest].join('.');
 }
 
+function isBaseOnlyOverridePath(path: string): boolean {
+  return BASE_ONLY_OVERRIDE_SECTIONS.has(path.split('.')[0]);
+}
+
 function deletePath<T extends AnyObject>(target: T, path: string): T {
   if (!isSafePath(path)) {
     return target;
@@ -195,7 +199,7 @@ export function mergeConfigOverrides(baseConfig: AppConfig, configs: IConfig[]):
   for (const config of sorted) {
     if (Array.isArray(config.tombstones)) {
       for (const path of config.tombstones) {
-        if (typeof path === 'string') {
+        if (typeof path === 'string' && !isBaseOnlyOverridePath(path)) {
           merged = deletePath(merged, remapOverridePath(path));
         }
       }

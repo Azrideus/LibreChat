@@ -1,18 +1,23 @@
 import { Types } from 'mongoose';
 import { Run, Providers } from '@librechat/agents';
-import { MemoryScope } from 'librechat-data-provider';
+import { MemoryScope, EModelEndpoint, AgentCapabilities } from 'librechat-data-provider';
 import type { IUser } from '@librechat/data-schemas';
 import type { Response } from 'express';
+import type { ServerRequest } from '~/types';
 import {
   processMemory,
   createMemoryTool,
   getMemoryAgentId,
   getRequestMemories,
+  buildInlineMemoryTool,
   createDeleteMemoryTool,
   invalidateRequestMemories,
   agentHasInlineMemoryTools,
 } from './memory';
 
+jest.mock('~/middleware/access', () => ({
+  checkAccess: jest.fn().mockResolvedValue(true),
+}));
 jest.mock('~/stream/GenerationJobManager');
 
 const mockCreateSafeUser = jest.fn((user) => ({
@@ -663,6 +668,67 @@ describe('createMemoryTool tokenLimit enforcement', () => {
     await tool.invoke({ key: 'k1' });
 
     expect(onWrite).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('buildInlineMemoryTool content filtering', () => {
+  it('keeps a legacy-only message filter scoped to ingress messages', async () => {
+    const setMemory = jest.fn().mockResolvedValue({ ok: true });
+    const req = {
+      config: {
+        endpoints: {
+          [EModelEndpoint.agents]: {
+            capabilities: [AgentCapabilities.memory],
+          },
+        },
+        memory: {
+          disabled: false,
+        },
+        messageFilter: {
+          pii: {
+            customPatterns: [
+              {
+                id: 'organization-token',
+                label: 'secret token',
+                regex: 'ORG-[A-Z]+',
+              },
+            ],
+          },
+        },
+      },
+      user: {
+        id: 'user-1',
+        personalization: {
+          memories: true,
+        },
+      },
+    } as ServerRequest;
+
+    const memoryTool = await buildInlineMemoryTool({
+      toolName: 'set_memory',
+      req,
+      agent: {
+        tools: [AgentCapabilities.memory],
+      },
+      userId: 'user-1',
+      memoryMethods: {
+        setMemory,
+        deleteMemory: jest.fn(),
+        getFormattedMemories: jest.fn(),
+      },
+      getRoleByName: jest.fn(),
+    });
+
+    expect(memoryTool).not.toBeNull();
+    await memoryTool?.func({ key: 'preferences', value: 'Keep ORG-SECRET' });
+
+    expect(setMemory).toHaveBeenCalledTimes(1);
+    expect(setMemory).toHaveBeenCalledWith(
+      expect.objectContaining({
+        key: 'preferences',
+        value: 'Keep ORG-SECRET',
+      }),
+    );
   });
 });
 

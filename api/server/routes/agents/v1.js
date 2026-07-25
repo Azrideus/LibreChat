@@ -46,7 +46,7 @@ router.get('/categories', v1.getAgentCategories);
  * @param {AgentCreateParams} req.body - The agent creation parameters.
  * @returns {Agent} 201 - Success response - application/json
  */
-router.post('/', checkAgentCreate, v1.createAgent);
+router.post('/', checkAgentCreate, configMiddleware, v1.createAgent);
 
 /**
  * Retrieves basic agent information (VIEW permission required).
@@ -112,6 +112,7 @@ router.patch(
     requiredPermission: PermissionBits.EDIT,
     resourceIdParam: 'id',
   }),
+  configMiddleware,
   v1.updateAgent,
 );
 
@@ -128,6 +129,7 @@ router.post(
     requiredPermission: PermissionBits.EDIT,
     resourceIdParam: 'id',
   }),
+  configMiddleware,
   v1.duplicateAgent,
 );
 
@@ -161,6 +163,7 @@ router.post(
     requiredPermission: PermissionBits.EDIT,
     resourceIdParam: 'id',
   }),
+  configMiddleware,
   v1.revertAgentVersion,
 );
 

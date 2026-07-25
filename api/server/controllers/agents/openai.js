@@ -26,8 +26,18 @@ const {
   createSubagentUsageSink,
   getTransactionsConfig,
   resolveRecursionLimit,
-  findPiiMatchInMessages,
+  inspectContent,
+  extractMessageContent,
+  extractModelParameterContent,
+  extractSkillContent,
+  contentFilterBlockResponse,
+  contentFilterUninspectableResponse,
   discoverConnectedAgents,
+  getBlockedOpaqueFileField,
+  isContentTraversalLimitError,
+  isNestedMessageTraversalProtected,
+  assertModelBoundContent,
+  isContentFilterError,
   getRemoteAgentPermissions,
   createToolExecuteHandler,
   buildNonStreamingResponse,
@@ -88,6 +98,9 @@ function createToolLoader(signal, definitionsOnly = true) {
         streamId: null, // No resumable stream for OpenAI compat
       });
     } catch (error) {
+      if (isContentFilterError(error)) {
+        throw error;
+      }
       logger.error('Error loading tools for agent ' + agentId, error);
     }
   };
@@ -166,6 +179,72 @@ const OpenAIChatCompletionController = async (req, res) => {
 
   const request = validation.request;
   const agentId = request.model;
+  const manualSkills = extractManualSkills(req.body);
+
+  const uninspectableField = getBlockedOpaqueFileField(appConfig?.filters, request.messages);
+  if (uninspectableField != null) {
+    const blockResponse = contentFilterUninspectableResponse(uninspectableField);
+    return sendErrorResponse(
+      res,
+      400,
+      blockResponse.message,
+      'invalid_request_error',
+      blockResponse.error,
+    );
+  }
+
+  const messageFragments = [];
+  let traversalError = null;
+  try {
+    for (const fragment of extractMessageContent(request.messages)) {
+      messageFragments.push(fragment);
+    }
+  } catch (error) {
+    if (!isContentTraversalLimitError(error)) {
+      throw error;
+    }
+    traversalError = error;
+  }
+  const contentFinding = inspectContent(
+    [
+      ...messageFragments,
+      ...extractModelParameterContent(request),
+      ...(manualSkills ?? []).flatMap((name) => extractSkillContent({ name })),
+    ],
+    {
+      filters: appConfig?.filters,
+      legacyPii: appConfig?.messageFilter?.pii,
+    },
+  );
+  if (contentFinding != null) {
+    const isLegacyFilter = contentFinding.detectorId === 'legacy-pattern';
+    const blockResponse = contentFilterBlockResponse(contentFinding);
+    return sendErrorResponse(
+      res,
+      400,
+      isLegacyFilter
+        ? `Message contains a ${contentFinding.label}. Remove it and try again.`
+        : blockResponse.message,
+      'invalid_request_error',
+      isLegacyFilter ? 'message_filter_pii_block' : blockResponse.error,
+    );
+  }
+  if (
+    traversalError != null &&
+    isNestedMessageTraversalProtected({
+      filters: appConfig?.filters,
+      legacyPii: appConfig?.messageFilter?.pii,
+      roles: request.messages.map((message) => message?.role),
+    })
+  ) {
+    return sendErrorResponse(
+      res,
+      traversalError.statusCode,
+      traversalError.body.message,
+      'invalid_request_error',
+      traversalError.body.error,
+    );
+  }
 
   // Look up the agent
   const agent = await db.getAgent({ id: agentId });
@@ -176,17 +255,6 @@ const OpenAIChatCompletionController = async (req, res) => {
       `Agent not found: ${agentId}`,
       'invalid_request_error',
       'model_not_found',
-    );
-  }
-
-  const piiHit = findPiiMatchInMessages(request.messages, appConfig?.messageFilter?.pii);
-  if (piiHit != null) {
-    return sendErrorResponse(
-      res,
-      400,
-      `Message contains a ${piiHit.label}. Remove it and try again.`,
-      'invalid_request_error',
-      'message_filter_pii_block',
     );
   }
 
@@ -298,8 +366,6 @@ const OpenAIChatCompletionController = async (req, res) => {
       getUserById: db.getUserById,
       accessibleSkillIds,
     });
-
-    const manualSkills = extractManualSkills(req.body);
 
     const primaryScopedSkillIds = resolveAgentScopedSkillIds({
       agent,
@@ -448,6 +514,16 @@ const OpenAIChatCompletionController = async (req, res) => {
     }
 
     primaryConfig.edges = discoveredEdges;
+    const runAgents = [primaryConfig, ...handoffAgentConfigs.values()];
+    const manualSkillPrimes = primaryConfig.manualSkillPrimes;
+    const alwaysApplySkillPrimes = primaryConfig.alwaysApplySkillPrimes;
+    assertModelBoundContent({
+      filters: appConfig?.filters,
+      legacyPii: appConfig?.messageFilter?.pii,
+      submittedMessages: request.messages,
+      agents: runAgents,
+      skills: [...(manualSkillPrimes ?? []), ...(alwaysApplySkillPrimes ?? [])],
+    });
 
     // Determine if streaming is enabled (check both request and agent config)
     const streamingDisabled = !!primaryConfig.model_parameters?.disableStreaming;
@@ -536,8 +612,6 @@ const OpenAIChatCompletionController = async (req, res) => {
      * LibreChat-style card SSE events don't apply here; only the
      * message-context part carries over.
      */
-    const manualSkillPrimes = primaryConfig.manualSkillPrimes;
-    const alwaysApplySkillPrimes = primaryConfig.alwaysApplySkillPrimes;
     if (
       (manualSkillPrimes && manualSkillPrimes.length > 0) ||
       (alwaysApplySkillPrimes && alwaysApplySkillPrimes.length > 0)
@@ -735,8 +809,6 @@ const OpenAIChatCompletionController = async (req, res) => {
     // the primary and any discovered handoff sub-agents)
     const userMCPAuthMap = discoveredMCPAuthMap ?? primaryConfig.userMCPAuthMap;
 
-    const runAgents = [primaryConfig, ...handoffAgentConfigs.values()];
-
     const run = await createRun({
       agents: runAgents,
       messages: formattedMessages,
@@ -872,6 +944,15 @@ const OpenAIChatCompletionController = async (req, res) => {
       writeSSE(res, '[DONE]');
       res.end();
     } else {
+      if (isContentFilterError(error)) {
+        return sendErrorResponse(
+          res,
+          error.statusCode,
+          error.body.message,
+          'invalid_request_error',
+          error.body.error,
+        );
+      }
       // Forward upstream provider status codes (e.g., Anthropic 400s) instead of masking as 500
       const statusCode =
         typeof error?.status === 'number' && error.status >= 400 && error.status < 600

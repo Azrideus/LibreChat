@@ -59,13 +59,10 @@ export class ConnectionsRepository {
     if (existingConnection) {
       // Check if config was cached/updated since connection was created
       if (serverConfig.updatedAt && existingConnection.isStale(serverConfig.updatedAt)) {
-        logger.info(
-          `${this.prefix(serverName)} Existing connection for ${serverName} is outdated. Recreating a new connection.`,
-          {
-            connectionCreated: new Date(existingConnection.createdAt).toISOString(),
-            configCachedAt: new Date(serverConfig.updatedAt).toISOString(),
-          },
-        );
+        logger.info(`${this.prefix()} Existing connection is outdated; recreating`, {
+          connectionCreated: new Date(existingConnection.createdAt).toISOString(),
+          configCachedAt: new Date(serverConfig.updatedAt).toISOString(),
+        });
 
         // Disconnect stale connection
         await existingConnection.disconnect();
@@ -129,8 +126,8 @@ export class ConnectionsRepository {
     const connection = this.connections.get(serverName);
     if (!connection) return Promise.resolve();
     this.connections.delete(serverName);
-    return connection.disconnect().catch((err) => {
-      logger.error(`${this.prefix(serverName)} Error disconnecting`, err);
+    return connection.disconnect().catch(() => {
+      logger.error(`${this.prefix()} Error disconnecting`);
     });
   }
 
@@ -141,8 +138,8 @@ export class ConnectionsRepository {
   }
 
   // Returns formatted log prefix for server messages
-  protected prefix(serverName: string): string {
-    return `[MCP][${serverName}]`;
+  protected prefix(): string {
+    return this.ownerId ? `[MCP][User: ${this.ownerId}]` : '[MCP]';
   }
 
   /**

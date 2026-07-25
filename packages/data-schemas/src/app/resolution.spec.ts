@@ -36,6 +36,37 @@ describe('mergeConfigOverrides', () => {
     expect(mergeConfigOverrides(baseConfig, undefined as unknown as IConfig[])).toBe(baseConfig);
   });
 
+  it('does not allow DB overrides or tombstones to weaken base-only filters', () => {
+    const base = {
+      filters: {
+        messages: {
+          pii: {
+            fields: ['text'],
+            starterPatterns: ['sk_prefix'],
+          },
+        },
+      },
+    } as unknown as AppConfig;
+    const configs = [
+      fakeConfig(
+        {
+          filters: {
+            messages: {
+              pii: {
+                fields: ['quote'],
+                starterPatterns: [],
+              },
+            },
+          },
+        },
+        10,
+        ['filters.messages.pii'],
+      ),
+    ];
+
+    expect(mergeConfigOverrides(base, configs).filters).toEqual(base.filters);
+  });
+
   it('deep merges interface UI fields into interfaceConfig', () => {
     const configs = [fakeConfig({ interface: { modelSelect: false } }, 10)];
     const result = mergeConfigOverrides(baseConfig, configs) as unknown as Record<string, unknown>;

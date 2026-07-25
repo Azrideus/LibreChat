@@ -109,11 +109,13 @@ export async function buildSteerMedia({
   user,
   item,
   getFiles,
+  assertFilesAllowed,
 }: {
   client: SteerMediaClient;
   user: SteerRequestUser | undefined;
   item: SteerQueueItem;
   getFiles: SteerFileFetcher;
+  assertFilesAllowed?: (files: IMongoFile[]) => void;
 }): Promise<SteerMediaResult | undefined> {
   const ids = collectFileIds(item.files);
   const filter = buildOwnerFilter(ids, user);
@@ -129,6 +131,7 @@ export async function buildSteerMedia({
   const fileDocs = ids
     .map((id) => docsById.get(id))
     .filter((doc): doc is IMongoFile => doc != null);
+  assertFilesAllowed?.(fileDocs);
   return encodeSteerContent({ client, text: item.text, steerId: item.steerId, fileDocs });
 }
 
