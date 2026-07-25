@@ -70,6 +70,8 @@ export interface IMongoFile extends Omit<Document, 'model'> {
      * derive the sessionKey explicitly.
      */
     codeEnvRef?: CodeEnvRef;
+    /** Dispatch-order stamp for the current source artifact generation. */
+    sourceDispatchedAt?: number;
   };
   expiresAt?: Date;
   expiredAt?: Date | null;

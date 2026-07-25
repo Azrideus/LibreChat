@@ -1,4 +1,5 @@
 import { logger } from '@librechat/data-schemas';
+import type { PreparedCodeOutputEntry } from '~/files/code/preflight';
 import type { ServerRequest } from '~/types';
 
 /**
@@ -41,6 +42,11 @@ export interface CodeHarvestDeps {
     output?: string;
     attachments?: unknown[];
   }) => Promise<{ matched: boolean; unfinished: boolean }>;
+  /** Host preflight: inspects the entire generated-file batch before any write. */
+  preflightCodeOutputBatch: (params: {
+    req: ServerRequest;
+    artifact: HarvestArtifact;
+  }) => Promise<PreparedCodeOutputEntry[]>;
   /** Host file service: downloads and persists one code output file. */
   processCodeOutput: (params: {
     req: ServerRequest;
@@ -52,6 +58,8 @@ export interface CodeHarvestDeps {
     agentId?: string;
     session_id?: string;
     freshClaimAfter?: number;
+    preparedBuffer?: Buffer;
+    downloadFallback?: boolean;
   }) => Promise<ProcessedCodeOutput | null>;
   /** Host file service: runs the deferred office-preview extraction. */
   runPreviewFinalize: (params: {
@@ -102,7 +110,13 @@ const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout
  * reverted the anchor.
  */
 export function createBackgroundCodeResultHandler(deps: CodeHarvestDeps): CodeHarvestHandler {
-  const { req, updateToolCallResult, processCodeOutput, runPreviewFinalize } = deps;
+  const {
+    req,
+    updateToolCallResult,
+    preflightCodeOutputBatch,
+    processCodeOutput,
+    runPreviewFinalize,
+  } = deps;
   return async ({
     toolCallId,
     messageId,
@@ -143,11 +157,8 @@ export function createBackgroundCodeResultHandler(deps: CodeHarvestDeps): CodeHa
      *  not overwrite it with stale bytes, no matter how late it settles. */
     const freshClaimAfter = dispatchedAt ?? Date.now();
     const codeArtifact = (artifact ?? {}) as HarvestArtifact;
-    const files = Array.isArray(codeArtifact.files) ? codeArtifact.files : [];
-    for (const file of files) {
-      if (file.inherited === true) {
-        continue;
-      }
+    const preparedEntries = await preflightCodeOutputBatch({ req, artifact: codeArtifact });
+    for (const { file, sessionId, preparedBuffer, downloadFallback } of preparedEntries) {
       try {
         const result = await processCodeOutput({
           req,
@@ -159,8 +170,10 @@ export function createBackgroundCodeResultHandler(deps: CodeHarvestDeps): CodeHa
           /** Rides the attachment so the client can route it to the right
            *  card when provider ids repeat across agents. */
           agentId,
-          session_id: file.storage_session_id ?? codeArtifact.session_id,
+          session_id: sessionId,
           freshClaimAfter,
+          preparedBuffer,
+          downloadFallback,
         });
         if (result?.file) {
           attachments.push(result.file);

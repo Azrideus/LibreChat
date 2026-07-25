@@ -56,6 +56,7 @@ describe('Share Methods', () => {
         textFormat: { type: String, enum: ['html', 'text'] },
         status: { type: String, enum: ['pending', 'ready', 'failed'] },
         previewError: String,
+        metadata: mongoose.Schema.Types.Mixed,
         tenantId: String,
       },
       { timestamps: true },
@@ -1965,6 +1966,11 @@ describe('Share Methods', () => {
         height: 80,
       });
       const docId = await createFile(userId);
+      const sourceDispatchedAt = 1_725_000_000_000;
+      await File.updateOne(
+        { file_id: docId },
+        { $set: { 'metadata.sourceDispatchedAt': sourceDispatchedAt } },
+      );
 
       await Message.create([
         {
@@ -1994,6 +2000,7 @@ describe('Share Methods', () => {
       expect(byId.get(imageId)?.storageKey).toBeUndefined();
       expect(byId.get(docId)?.filename).toBe('report.pdf');
       expect(byId.get(docId)?.filepath).toBe(`/uploads/${userId}/${docId}`);
+      expect(byId.get(docId)?.sourceDispatchedAt).toBe(sourceDispatchedAt);
     });
 
     test('createSharedLink with snapshotFiles=false stores no snapshots', async () => {
@@ -2056,7 +2063,14 @@ describe('Share Methods', () => {
         text: 'doc',
         isCreatedByUser: true,
         files: [
-          { file_id: docId, type: 'application/pdf', filepath: `/uploads/${userId}/${docId}` },
+          {
+            file_id: docId,
+            type: 'application/pdf',
+            filepath: `/uploads/${userId}/${docId}`,
+            preview: `/previews/${userId}/${docId}`,
+            uri: `https://files.example.test/${userId}/${docId}`,
+            url: `https://cdn.example.test/${userId}/${docId}`,
+          },
         ],
       });
 
@@ -2064,9 +2078,14 @@ describe('Share Methods', () => {
       const result = await shareMethods.getSharedMessages(shareId);
 
       const file = (result?.messages[0].files?.[0] ?? {}) as Record<string, unknown>;
-      expect(file.filepath).toBe(`/api/share/${shareId}/files/${docId}`);
-      // owner storage path must not leak
-      expect(String(file.filepath)).not.toContain(userId);
+      const sharedRoute = `/api/share/${shareId}/files/${docId}`;
+      expect(file).toMatchObject({
+        filepath: sharedRoute,
+        preview: sharedRoute,
+        uri: sharedRoute,
+        url: sharedRoute,
+      });
+      expect(JSON.stringify(file)).not.toContain(userId);
     });
 
     test('getSharedMessages neutralizes URLs for non-snapshotted files', async () => {
@@ -2082,7 +2101,15 @@ describe('Share Methods', () => {
         user: userId,
         text: 'doc',
         isCreatedByUser: true,
-        files: [{ file_id: remoteId, filepath: originalPath }],
+        files: [
+          {
+            file_id: remoteId,
+            filepath: originalPath,
+            preview: `${originalPath}/preview`,
+            uri: `https://files.example.test/${userId}/${remoteId}`,
+            url: `https://cdn.example.test/${userId}/${remoteId}`,
+          },
+        ],
       });
 
       const { shareId } = await shareMethods.createSharedLink(userId, conversationId);
@@ -2091,6 +2118,9 @@ describe('Share Methods', () => {
       // Non-snapshotted (non-streamable source): original URL must not leak.
       expect(file.filepath).toBeUndefined();
       expect(file.preview).toBeUndefined();
+      expect(file.uri).toBeUndefined();
+      expect(file.url).toBeUndefined();
+      expect(JSON.stringify(file)).not.toContain(userId);
     });
 
     test('updateSharedLink recomputes snapshots from current messages', async () => {
@@ -2314,6 +2344,40 @@ describe('Share Methods', () => {
       // snapshot persisted by the lazy backfill
       const saved = await SharedLink.findOne({ shareId }).lean();
       expect(saved?.fileSnapshots).toHaveLength(1);
+    });
+
+    test('runs public projection preflight before persisting a legacy backfill', async () => {
+      const userId = new mongoose.Types.ObjectId().toString();
+      const conversationId = `conv_${nanoid()}`;
+      await seedConversation(userId, conversationId);
+      const docId = await createFile(userId);
+      const message = await Message.create({
+        messageId: `msg_${nanoid()}`,
+        conversationId,
+        user: userId,
+        text: 'doc',
+        isCreatedByUser: true,
+        files: [{ file_id: docId, filepath: `/uploads/${userId}/${docId}` }],
+      });
+      const shareId = `share_${nanoid()}`;
+      await SharedLink.create({
+        shareId,
+        conversationId,
+        user: userId,
+        messages: [message._id],
+      });
+      const rejected = new Error('policy rejected');
+      const preflight = jest.fn(async () => {
+        throw rejected;
+      });
+
+      await expect(shareMethods.getSharedMessages(shareId, undefined, { preflight })).rejects.toBe(
+        rejected,
+      );
+
+      expect(preflight).toHaveBeenCalledTimes(1);
+      const saved = await SharedLink.findOne({ shareId }).lean();
+      expect(saved?.fileSnapshots).toBeUndefined();
     });
 
     test('does not snapshot transient text-source files', async () => {

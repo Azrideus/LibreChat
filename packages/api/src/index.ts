@@ -45,6 +45,8 @@ export * from './memory';
 export * from './modelSpecs';
 /* Agents */
 export * from './agents';
+/* Assistants */
+export * from './assistants';
 /* Actions */
 export * from './actions';
 /* Prompts */
@@ -72,6 +74,7 @@ export * from './cache';
 export * from './shared-links/access';
 export * from './shared-links/service';
 export * from './shared-links/config';
+export * from './shared-links/protection';
 /* Stream */
 export * from './stream';
 /* Diagnostics */

@@ -28,6 +28,10 @@ jest.mock('@librechat/api', () => {
     getCodeApiAuthHeaders: jest.fn(async () => ({})),
     classifyCodeArtifact: jest.fn(() => 'other'),
     extractCodeArtifactText: jest.fn(async () => null),
+    getBoundedCodeOutputByteLimit: (configured) =>
+      typeof configured === 'number' && Number.isFinite(configured) && configured > 0
+        ? Math.min(configured, 64 * 1024 * 1024)
+        : 64 * 1024 * 1024,
     /* `processCodeOutput` calls this to derive the trust flag persisted
      * on `IMongoFile.textFormat` — Codex P1 review on PR #12934. The
      * mock returns null in lockstep with the null `text` above so
