@@ -293,7 +293,6 @@ describe('Agent Abort Endpoint', () => {
           }),
           expect.objectContaining({
             context: 'api/server/routes/agents/index.js - abort endpoint',
-            capExpiryToConversation: true,
           }),
         );
       });

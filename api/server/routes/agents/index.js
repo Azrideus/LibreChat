@@ -400,10 +400,7 @@ router.post('/chat/abort', configMiddleware, async (req, res) => {
             interfaceConfig: req?.config?.interfaceConfig,
           },
           responseMessage,
-          {
-            context: 'api/server/routes/agents/index.js - abort endpoint',
-            capExpiryToConversation: true,
-          },
+          { context: 'api/server/routes/agents/index.js - abort endpoint' },
         );
         logger.debug(`[AgentStream] Saved partial response for: ${jobStreamId}`);
       } catch (saveError) {
