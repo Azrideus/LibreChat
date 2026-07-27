@@ -3677,6 +3677,29 @@ describe('AgentClient - titleConvo', () => {
       expect(mockCreateMemoryProcessor.mock.calls[0][0]).not.toHaveProperty('contentInspection');
     });
 
+    it('should bind memory processing to the current generation epoch', async () => {
+      mockReq._resumableStreamId = 'convo-123';
+      mockCheckAccess.mockResolvedValue(true);
+      mockInitializeAgent.mockResolvedValue({
+        ...mockAgent,
+        provider: EModelEndpoint.openAI,
+      });
+      mockCreateMemoryProcessor.mockResolvedValue([undefined, jest.fn()]);
+
+      client = new AgentClient({ ...mockOptions, jobCreatedAt: 1234 });
+      client.conversationId = 'convo-123';
+      client.responseMessageId = 'response-123';
+
+      await client.useMemory();
+
+      expect(mockCreateMemoryProcessor).toHaveBeenCalledWith(
+        expect.objectContaining({
+          streamId: 'convo-123',
+          jobCreatedAt: 1234,
+        }),
+      );
+    });
+
     it('should load different agent when memory config agent.id differs from current agent id', async () => {
       const differentAgentId = 'different-agent-456';
       const differentAgent = {

@@ -893,10 +893,14 @@ async function finalizeResumedTurn({
         client,
         onTitleGenerated: ({ conversationId: titleConvoId, title }) => {
           conversation.title = title;
-          return GenerationJobManager.emitChunk(streamId, {
-            event: 'title',
-            data: { conversationId: titleConvoId, title },
-          });
+          return GenerationJobManager.emitChunk(
+            streamId,
+            {
+              event: 'title',
+              data: { conversationId: titleConvoId, title },
+            },
+            { expectedCreatedAt: job.createdAt },
+          );
         },
       });
     } catch (err) {
@@ -1136,8 +1140,9 @@ const ResumeAgentController = async (req, res, next, initializeClient, addTitle)
   let seedContent;
   let userSubmittedPaths;
   let storedMessages;
+  let resumeState;
   try {
-    const resumeState = await GenerationJobManager.getResumeState(streamId);
+    resumeState = await GenerationJobManager.getResumeState(streamId);
     seedContent = resumeState?.aggregatedContent ?? [];
     if (pendingAction.payload?.type === 'ask_user_question') {
       seedContent = attachAskUserQuestionAnswer(
@@ -1309,6 +1314,7 @@ const ResumeAgentController = async (req, res, next, initializeClient, addTitle)
       resumeValue: mapped.resumeValue,
       seedContent,
       storedMessages,
+      runSteps: resumeState?.runSteps ?? [],
       abortController: job.abortController,
       // Carry the user's MCP auth so approved MCP tools run with their credentials.
       userMCPAuthMap: result.userMCPAuthMap,

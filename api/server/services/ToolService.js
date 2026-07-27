@@ -689,6 +689,7 @@ const isBuiltInTool = (toolName) =>
  * @param {ServerResponse} [params.res] - The response object for SSE events
  * @param {Object} params.agent - The agent configuration
  * @param {string|null} [params.streamId] - Stream ID for resumable mode
+ * @param {number} [params.jobCreatedAt] - The generation epoch that owns emitted tool events
  * @returns {Promise<{
  *   toolDefinitions?: import('@librechat/api').LCTool[];
  *   toolRegistry?: Map<string, import('@librechat/api').LCTool>;
@@ -697,7 +698,14 @@ const isBuiltInTool = (toolName) =>
  *   hasDeferredTools?: boolean;
  * }>}
  */
-async function loadToolDefinitionsWrapper({ req, res, agent, streamId = null, tool_resources }) {
+async function loadToolDefinitionsWrapper({
+  req,
+  res,
+  agent,
+  streamId = null,
+  jobCreatedAt,
+  tool_resources,
+}) {
   if (!agent.tools || agent.tools.length === 0) {
     return { toolDefinitions: [] };
   }
@@ -822,8 +830,12 @@ async function loadToolDefinitionsWrapper({ req, res, agent, streamId = null, to
       });
 
       if (streamId) {
-        await GenerationJobManager.emitChunk(streamId, runStepEvent);
-        await GenerationJobManager.emitChunk(streamId, runStepDeltaEvent);
+        await GenerationJobManager.emitChunk(streamId, runStepEvent, {
+          expectedCreatedAt: jobCreatedAt,
+        });
+        await GenerationJobManager.emitChunk(streamId, runStepDeltaEvent, {
+          expectedCreatedAt: jobCreatedAt,
+        });
       } else if (res && !res.writableEnded) {
         sendEvent(res, runStepEvent);
         sendEvent(res, runStepDeltaEvent);
@@ -854,7 +866,9 @@ async function loadToolDefinitionsWrapper({ req, res, agent, streamId = null, to
       });
 
       if (streamId) {
-        await GenerationJobManager.emitChunk(streamId, runStepCompletedEvent);
+        await GenerationJobManager.emitChunk(streamId, runStepCompletedEvent, {
+          expectedCreatedAt: jobCreatedAt,
+        });
       } else if (res && !res.writableEnded) {
         sendEvent(res, runStepCompletedEvent);
       } else {
@@ -1252,6 +1266,7 @@ async function loadToolDefinitionsWrapper({ req, res, agent, streamId = null, to
  * @param {Object} [params.tool_resources] - Tool resources
  * @param {string} [params.openAIApiKey] - OpenAI API key
  * @param {string|null} [params.streamId] - Stream ID for resumable mode
+ * @param {number} [params.jobCreatedAt] - The generation epoch that owns emitted tool events
  * @param {boolean} [params.definitionsOnly=true] - When true, returns only serializable
  *   tool definitions without creating full tool instances. Use for event-driven mode
  *   where tools are loaded on-demand during execution.
@@ -1264,10 +1279,18 @@ async function loadAgentTools({
   tool_resources,
   openAIApiKey,
   streamId = null,
+  jobCreatedAt,
   definitionsOnly = true,
 }) {
   if (definitionsOnly) {
-    return loadToolDefinitionsWrapper({ req, res, agent, streamId, tool_resources });
+    return loadToolDefinitionsWrapper({
+      req,
+      res,
+      agent,
+      streamId,
+      jobCreatedAt,
+      tool_resources,
+    });
   }
 
   if (!agent.tools || agent.tools.length === 0) {
@@ -1344,7 +1367,7 @@ async function loadAgentTools({
   /** @type {ReturnType<typeof createOnSearchResults>} */
   let webSearchCallbacks;
   if (includesWebSearch) {
-    webSearchCallbacks = createOnSearchResults(res, streamId);
+    webSearchCallbacks = createOnSearchResults(res, streamId, jobCreatedAt);
   }
 
   /** @type {Record<string, Record<string, string>>} */
@@ -1367,6 +1390,7 @@ async function loadAgentTools({
     options: {
       req,
       res,
+      jobCreatedAt,
       openAIApiKey,
       tool_resources,
       processFileURL,
@@ -1572,6 +1596,7 @@ async function loadAgentTools({
       name: toolName,
       description: functionSignature.description,
       streamId,
+      jobCreatedAt,
       useSSRFProtection: !Array.isArray(_allowedDomains) || _allowedDomains.length === 0,
       allowedAddresses: _allowedAddresses,
     });
@@ -1625,6 +1650,7 @@ async function loadAgentTools({
  * @param {Record<string, Record<string, string>>} [params.userMCPAuthMap] - User MCP auth map
  * @param {Object} [params.tool_resources] - Tool resources
  * @param {string|null} [params.streamId] - Stream ID for web search callbacks
+ * @param {number} [params.jobCreatedAt] - The generation epoch that owns emitted tool events
  * @param {boolean} [params.actionsEnabled] - Whether the actions capability is enabled
  * @returns {Promise<{ loadedTools: Array, configurable: Object }>}
  */
@@ -1641,6 +1667,7 @@ async function loadToolsForExecution({
   userMCPAuthMap,
   tool_resources,
   streamId = null,
+  jobCreatedAt,
   actionsEnabled,
 }) {
   const appConfig = req.config;
@@ -1816,7 +1843,9 @@ async function loadToolsForExecution({
 
   if (regularToolNames.length > 0) {
     const includesWebSearch = regularToolNames.includes(Tools.web_search);
-    const webSearchCallbacks = includesWebSearch ? createOnSearchResults(res, streamId) : undefined;
+    const webSearchCallbacks = includesWebSearch
+      ? createOnSearchResults(res, streamId, jobCreatedAt)
+      : undefined;
 
     const { loadedTools } = await loadTools({
       agent,
@@ -1828,6 +1857,7 @@ async function loadToolsForExecution({
       options: {
         req,
         res,
+        jobCreatedAt,
         tool_resources,
         processFileURL,
         uploadImageBuffer,
@@ -1853,6 +1883,7 @@ async function loadToolsForExecution({
       agent,
       appConfig,
       streamId,
+      jobCreatedAt,
       actionToolNames,
       preparedActionSnapshot,
     });
@@ -1892,6 +1923,7 @@ async function loadToolsForExecution({
  * @param {Object} params.agent - The agent object
  * @param {Object} params.appConfig - App configuration
  * @param {string|null} params.streamId - Stream ID
+ * @param {number} [params.jobCreatedAt] - The generation epoch that owns emitted tool events
  * @param {string[]} params.actionToolNames - Action tool names to load
  * @param {{storedActions: Array, actionSets: Array}} params.preparedActionSnapshot - Pre-inspected action snapshot
  * @returns {Promise<Array>} Loaded action tools
@@ -1902,6 +1934,7 @@ async function loadActionToolsForExecution({
   agent,
   appConfig,
   streamId,
+  jobCreatedAt,
   actionToolNames,
   preparedActionSnapshot,
 }) {
@@ -1997,6 +2030,7 @@ async function loadActionToolsForExecution({
       res,
       action,
       streamId,
+      jobCreatedAt,
       zodSchema,
       encrypted,
       requestBuilder,

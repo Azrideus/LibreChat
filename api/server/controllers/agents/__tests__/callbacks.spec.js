@@ -7,6 +7,9 @@ jest.mock('nanoid', () => ({
 
 jest.mock('@librechat/api', () => ({
   sendEvent: jest.fn(),
+  GenerationJobManager: {
+    emitChunk: jest.fn(),
+  },
   HOST_FILE_AUTHORING_ARTIFACT_KEY: '__librechat_file_authoring',
   getToolInputValidationDetails: jest.fn((result, validationError) =>
     validationError != null
@@ -84,6 +87,61 @@ jest.mock('~/server/services/Tools/credentials', () => ({
 jest.mock('~/server/services/Files/process', () => ({
   saveBase64Image: jest.fn(),
 }));
+
+describe('resumable event generation fencing', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('forwards the originating job epoch with run-step events', async () => {
+    const { GenerationJobManager } = require('@librechat/api');
+    const { GraphEvents } = jest.requireActual('@librechat/agents');
+    const { getDefaultHandlers } = require('../callbacks');
+    const data = {
+      id: 'step-1',
+      index: 0,
+      stepDetails: {
+        type: 'tool_calls',
+        tool_calls: [{ id: 'call-1', name: 'approval_probe', args: '{}' }],
+      },
+    };
+    const handlers = getDefaultHandlers({
+      res: { write: jest.fn() },
+      aggregateContent: jest.fn(),
+      toolEndCallback: jest.fn(),
+      collectedUsage: [],
+      streamId: 'conversation-1',
+      jobCreatedAt: 1234,
+    });
+
+    await handlers[GraphEvents.ON_RUN_STEP].handle(GraphEvents.ON_RUN_STEP, data);
+
+    expect(GenerationJobManager.emitChunk).toHaveBeenCalledWith(
+      'conversation-1',
+      { event: GraphEvents.ON_RUN_STEP, data },
+      { expectedCreatedAt: 1234 },
+    );
+  });
+
+  it('forwards the originating job epoch with deferred attachments', () => {
+    const { GenerationJobManager } = require('@librechat/api');
+    const { createAttachmentEmitter } = require('../callbacks');
+    const attachment = { file_id: 'file-1', status: 'ready' };
+    const emitAttachment = createAttachmentEmitter({
+      res: { write: jest.fn() },
+      streamId: 'conversation-1',
+      jobCreatedAt: 1234,
+    });
+
+    emitAttachment(attachment);
+
+    expect(GenerationJobManager.emitChunk).toHaveBeenCalledWith(
+      'conversation-1',
+      { event: 'attachment', data: attachment },
+      { expectedCreatedAt: 1234 },
+    );
+  });
+});
 
 describe('createToolEndCallback', () => {
   let req, res, artifactPromises, createToolEndCallback;
@@ -493,6 +551,72 @@ describe('createToolEndCallback', () => {
       expect(phase2.type).toBe('text/csv');
       expect(phase2.conversationId).toBe('thread789');
       expect(phase2.textFormat).toBe('html');
+    });
+
+    it('fences both generated-file attachment emits to the originating job epoch', async () => {
+      const { GenerationJobManager } = require('@librechat/api');
+      const finalize = jest.fn().mockResolvedValue({
+        file_id: 'fid-fenced',
+        filename: 'report.xlsx',
+        messageId: 'persisted-message',
+        status: 'ready',
+      });
+      processCodeOutput.mockResolvedValue({
+        file: {
+          file_id: 'fid-fenced',
+          filename: 'report.xlsx',
+          messageId: 'run-fenced',
+          toolCallId: 'tool-fenced',
+          status: 'pending',
+        },
+        finalize,
+      });
+
+      const toolEndCallback = createToolEndCallback({
+        req,
+        res,
+        artifactPromises,
+        streamId: 'thread-fenced',
+        jobCreatedAt: 1234,
+      });
+      const event = makeCodeExecutionEvent({
+        runId: 'run-fenced',
+        threadId: 'thread-fenced',
+        toolCallId: 'tool-fenced',
+        fileId: 'fid-fenced',
+        name: 'report.xlsx',
+      });
+
+      await toolEndCallback({ output: event.output }, event.metadata);
+      await Promise.all(artifactPromises);
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(GenerationJobManager.emitChunk).toHaveBeenNthCalledWith(
+        1,
+        'thread-fenced',
+        {
+          event: 'attachment',
+          data: expect.objectContaining({
+            file_id: 'fid-fenced',
+            messageId: 'run-fenced',
+            status: 'pending',
+          }),
+        },
+        { expectedCreatedAt: 1234 },
+      );
+      expect(GenerationJobManager.emitChunk).toHaveBeenNthCalledWith(
+        2,
+        'thread-fenced',
+        {
+          event: 'attachment',
+          data: expect.objectContaining({
+            file_id: 'fid-fenced',
+            messageId: 'run-fenced',
+            status: 'ready',
+          }),
+        },
+        { expectedCreatedAt: 1234 },
+      );
     });
 
     it('the preview update emit is skipped when finalize resolves to null (no DB update happened)', async () => {

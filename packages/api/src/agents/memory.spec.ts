@@ -1,7 +1,7 @@
 import { Types } from 'mongoose';
-import { Run, Providers } from '@librechat/agents';
+import { Run, Providers, GraphEvents } from '@librechat/agents';
 import { AIMessage, HumanMessage } from '@librechat/agents/langchain/messages';
-import { MemoryScope, EModelEndpoint, AgentCapabilities } from 'librechat-data-provider';
+import { Tools, MemoryScope, EModelEndpoint, AgentCapabilities } from 'librechat-data-provider';
 import type { FiltersConfig } from 'librechat-data-provider';
 import type { IUser } from '@librechat/data-schemas';
 import type { Response } from 'express';
@@ -17,6 +17,7 @@ import {
   invalidateRequestMemories,
   agentHasInlineMemoryTools,
 } from './memory';
+import { GenerationJobManager } from '~/stream/GenerationJobManager';
 
 jest.mock('~/middleware/access', () => ({
   checkAccess: jest.fn().mockResolvedValue(true),
@@ -111,6 +112,73 @@ function createTestUser(overrides: Partial<IUser> = {}): IUser {
     ...overrides,
   } as IUser;
 }
+
+describe('Memory attachment generation fencing', () => {
+  it('emits artifacts with the generation epoch that started memory processing', async () => {
+    const memoryArtifact = {
+      type: 'update' as const,
+      key: 'response_style',
+      value: 'concise',
+    };
+    const processStream = jest.fn(async () => {
+      const runConfig = (Run.create as jest.Mock).mock.calls[0][0];
+      runConfig.customHandlers[GraphEvents.TOOL_END].handle(
+        GraphEvents.TOOL_END,
+        {
+          output: {
+            tool_call_id: 'memory-call-1',
+            artifact: { [Tools.memory]: memoryArtifact },
+          },
+        },
+        {
+          run_id: 'response-1',
+          thread_id: 'conversation-1',
+        },
+      );
+      return 'success';
+    });
+    (Run.create as jest.Mock).mockReturnValueOnce({ processStream });
+
+    const [, runMemory] = await createMemoryProcessor({
+      res: {
+        headersSent: true,
+        write: jest.fn(),
+      } as unknown as Response,
+      userId: 'user-1',
+      messageId: 'response-1',
+      conversationId: 'conversation-1',
+      streamId: 'conversation-1',
+      jobCreatedAt: 1234,
+      memoryMethods: {
+        setMemory: jest.fn(),
+        deleteMemory: jest.fn(),
+        getUserMemories: jest.fn().mockResolvedValue([]),
+        getFormattedMemories: jest.fn().mockResolvedValue({
+          withKeys: '',
+          withoutKeys: '',
+          totalTokens: 0,
+        }),
+      },
+    });
+
+    await runMemory([]);
+
+    expect(GenerationJobManager.emitChunk).toHaveBeenCalledWith(
+      'conversation-1',
+      {
+        event: 'attachment',
+        data: {
+          type: Tools.memory,
+          toolCallId: 'memory-call-1',
+          messageId: 'response-1',
+          conversationId: 'conversation-1',
+          [Tools.memory]: memoryArtifact,
+        },
+      },
+      { expectedCreatedAt: 1234 },
+    );
+  });
+});
 
 describe('Memory Agent Header Resolution', () => {
   let testUser: IUser;
