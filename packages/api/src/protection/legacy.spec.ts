@@ -139,28 +139,117 @@ describe('legacy content protection', () => {
     );
   });
 
-  it('runs legacy custom patterns through the linear-time engine', () => {
+  it('preserves JavaScript regex compatibility for legacy custom patterns', () => {
     jest.mocked(logger.warn).mockClear();
-    const nestedQuantifier = {
+    const config = {
       starterPatterns: [],
-      customPatterns: [{ id: 'nested', label: 'Nested', regex: '(a+)+$' }],
+      customPatterns: [
+        { id: 'lookahead', label: 'Lookahead', regex: '(?=PRIVATE)PRIVATE' },
+        { id: 'backreference', label: 'Backreference', regex: '([A-Z]{3})-\\1' },
+      ],
     } as MessageFilterPiiConfig;
-    const nativeOnly = {
+
+    expect(
+      inspectLegacyPii([fragment('external-message.0.content', 'PRIVATE')], config)?.ruleId,
+    ).toBe('lookahead');
+    expect(
+      inspectLegacyPii([fragment('external-message.0.content', 'ABC-ABC')], config)?.ruleId,
+    ).toBe('backreference');
+    expect(
+      inspectLegacyPii([fragment('external-message.0.content', 'SECRET\u00a0KEY')], {
+        starterPatterns: [],
+        customPatterns: [{ id: 'whitespace', label: 'Whitespace', regex: 'SECRET\\sKEY' }],
+      })?.ruleId,
+    ).toBe('whitespace');
+    expect(logger.warn).not.toHaveBeenCalled();
+  });
+
+  it('fails closed without executing an unsafe legacy native pattern', () => {
+    jest.mocked(logger.warn).mockClear();
+    const config = {
+      starterPatterns: [],
+      customPatterns: [
+        {
+          id: 'unsafe-native',
+          label: 'Unsafe native',
+          regex: '(a+)+$',
+        },
+      ],
+    } as MessageFilterPiiConfig;
+
+    const finding = inspectLegacyPii([fragment('external-message.0.content', 'safe')], config);
+
+    expect(finding?.ruleId).toBe('unsafe-native');
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining(
+        '[messageFilter.pii] failing closed for unsafe customPattern "unsafe-native"',
+      ),
+    );
+  });
+
+  it('fails closed when a valid legacy native pattern cannot be analyzed', () => {
+    jest.mocked(logger.warn).mockClear();
+    const config = {
+      starterPatterns: [],
+      customPatterns: [
+        {
+          id: 'named-backreference',
+          label: 'Named backreference',
+          regex: '(?<word>[A-Z]+)-\\k<word>',
+        },
+      ],
+    } as MessageFilterPiiConfig;
+
+    const finding = inspectLegacyPii([fragment('external-message.0.content', 'safe')], config);
+
+    expect(finding?.ruleId).toBe('named-backreference');
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining(
+        '[messageFilter.pii] failing closed because customPattern "named-backreference" could not be analyzed',
+      ),
+    );
+  });
+
+  it('fails closed before compiling an oversized legacy native pattern', () => {
+    jest.mocked(logger.warn).mockClear();
+    const config = {
+      starterPatterns: [],
+      customPatterns: [
+        {
+          id: 'oversized-pattern',
+          label: 'Oversized pattern',
+          regex: 'A'.repeat(513),
+        },
+      ],
+    } as MessageFilterPiiConfig;
+
+    const finding = inspectLegacyPii([fragment('external-message.0.content', 'safe')], config);
+
+    expect(finding?.ruleId).toBe('oversized-pattern');
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining(
+        '[messageFilter.pii] failing closed because customPattern "oversized-pattern" is too long',
+      ),
+    );
+  });
+
+  it('fails closed on oversized input before running a legacy native pattern', () => {
+    jest.mocked(logger.warn).mockClear();
+    const config = {
       starterPatterns: [],
       customPatterns: [{ id: 'lookahead', label: 'Lookahead', regex: '(?=PRIVATE)PRIVATE' }],
     } as MessageFilterPiiConfig;
 
-    expect(
-      inspectLegacyPii(
-        [fragment('external-message.0.content', `${'a'.repeat(50_000)}!`)],
-        nestedQuantifier,
-      ),
-    ).toBeNull();
-    expect(
-      inspectLegacyPii([fragment('external-message.0.content', 'PRIVATE')], nativeOnly),
-    ).toBeNull();
+    const finding = inspectLegacyPii(
+      [fragment('external-message.0.content', 'a'.repeat(64 * 1024 + 1))],
+      config,
+    );
+
+    expect(finding?.ruleId).toBe('lookahead');
     expect(logger.warn).toHaveBeenCalledWith(
-      expect.stringContaining('[messageFilter.pii] dropping invalid customPattern "lookahead":'),
+      expect.stringContaining(
+        '[messageFilter.pii] blocking oversized input for customPattern "lookahead"',
+      ),
     );
   });
 });

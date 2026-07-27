@@ -170,6 +170,7 @@
   "dependencies": {
     "@langchain/langgraph-checkpoint": "^1.1.2",
     "@langchain/langgraph-checkpoint-mongodb": "^1.4.0",
-    "re2js": "^2.8.6"
+    "re2js": "^2.8.6",
+    "redos-detector": "^6.1.4"
   }
 }

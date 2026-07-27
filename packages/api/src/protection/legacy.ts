@@ -46,7 +46,7 @@ export function createLegacyPiiInspector(
   if (cached != null) {
     return cached;
   }
-  const patternInspector = createPatternContentInspector(config, { linearTime: true });
+  const patternInspector = createPatternContentInspector(config);
   if (!patternInspector.active) {
     INACTIVE_LEGACY_CONFIGS.add(config);
     return null;

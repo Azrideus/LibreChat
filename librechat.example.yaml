@@ -940,8 +940,10 @@ endpoints:
 #     # enable all starters (sk_prefix, bearer_header, api_key_header).
 #     starterPatterns: [sk_prefix, bearer_header, api_key_header]
 #     # (optional) Operator-defined patterns. Each entry needs id,
-#     # label, and a regex. Legacy patterns are executed by the same bounded,
-#     # linear-time engine; unsupported native-only constructs are ignored.
+#     # label, and a JavaScript-flavor regex. Patterns are checked for unsafe
+#     # backtracking and fail closed when they cannot be safely evaluated;
+#     # selected inputs over 64 KiB are also blocked.
+#     # Prefer `filters.messages` for linear-time patterns and source-aware fields.
 #     customPatterns:
 #       - id: anthropic_api_key
 #         label: Anthropic API key

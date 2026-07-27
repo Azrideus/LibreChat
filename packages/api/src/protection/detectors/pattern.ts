@@ -1,4 +1,5 @@
 import { RE2JS } from 're2js';
+import { isSafePattern } from 'redos-detector';
 import { logger } from '@librechat/data-schemas';
 import type { MessageFilterPiiConfig, FilterPiiCustomPatternConfig } from 'librechat-data-provider';
 import type { ProtectionFinding, TextContentFragment } from '../types';
@@ -36,6 +37,71 @@ const STARTER_PATTERNS: readonly CompiledPattern[] = [
 const STARTER_BY_ID = new Map(STARTER_PATTERNS.map((pattern) => [pattern.id, pattern]));
 const NATIVE_INSPECTOR_CACHE = new WeakMap<object, PatternContentInspector>();
 const LINEAR_INSPECTOR_CACHE = new WeakMap<object, PatternContentInspector>();
+const LEGACY_PATTERN_MAX_INPUT_BYTES = 64 * 1024;
+const LEGACY_PATTERN_MAX_PATTERN_LENGTH = 512;
+const LEGACY_PATTERN_MAX_SCORE = 200;
+const LEGACY_PATTERN_ANALYSIS_TIMEOUT_MS = 100;
+
+/**
+ * Legacy custom patterns retain JavaScript semantics after bounded static
+ * analysis. Unsafe, unknown, or oversized cases block instead of running an
+ * unbounded backtracking match against request content.
+ */
+class ValidatedNativePattern implements TestablePattern {
+  private readonly pattern: RegExp;
+  private warnedOversized = false;
+
+  constructor(
+    regex: string,
+    private readonly id: string,
+  ) {
+    this.pattern = new RegExp(regex);
+  }
+
+  test(input: string): boolean {
+    if (Buffer.byteLength(input, 'utf8') > LEGACY_PATTERN_MAX_INPUT_BYTES) {
+      if (!this.warnedOversized) {
+        this.warnedOversized = true;
+        logger.warn(
+          `[messageFilter.pii] blocking oversized input for customPattern ${JSON.stringify(this.id)}`,
+        );
+      }
+      return true;
+    }
+    this.pattern.lastIndex = 0;
+    return this.pattern.test(input);
+  }
+}
+
+function createValidatedNativePattern(regex: string, id: string): TestablePattern {
+  if (regex.length > LEGACY_PATTERN_MAX_PATTERN_LENGTH) {
+    logger.warn(
+      `[messageFilter.pii] failing closed because customPattern ${JSON.stringify(id)} is too long`,
+    );
+    return { test: () => true };
+  }
+  const pattern = new ValidatedNativePattern(regex, id);
+  let analysis: ReturnType<typeof isSafePattern>;
+  try {
+    analysis = isSafePattern(regex, {
+      maxScore: LEGACY_PATTERN_MAX_SCORE,
+      maxSteps: 20_000,
+      timeout: LEGACY_PATTERN_ANALYSIS_TIMEOUT_MS,
+    });
+  } catch {
+    logger.warn(
+      `[messageFilter.pii] failing closed because customPattern ${JSON.stringify(id)} could not be analyzed`,
+    );
+    return { test: () => true };
+  }
+  if (analysis.safe) {
+    return pattern;
+  }
+  logger.warn(
+    `[messageFilter.pii] failing closed for unsafe customPattern ${JSON.stringify(id)} (${analysis.error ?? 'unsafe'})`,
+  );
+  return { test: () => true };
+}
 
 function selectStarter(ids?: readonly string[]): readonly CompiledPattern[] {
   if (ids == null) {
@@ -100,7 +166,9 @@ export function createPatternContentInspector(
         id: pattern.id,
         label: pattern.label,
         pattern:
-          options.linearTime === true ? RE2JS.compile(pattern.regex) : new RegExp(pattern.regex),
+          options.linearTime === true
+            ? RE2JS.compile(pattern.regex)
+            : createValidatedNativePattern(pattern.regex, pattern.id),
       });
     } catch (error) {
       logger.warn(
