@@ -21,12 +21,7 @@ const {
   SYSTEM_TENANT_ID,
   createTempChatExpirationDate,
 } = require('@librechat/data-schemas');
-const {
-  FileSources,
-  PermissionTypes,
-  Permissions,
-  RetentionMode,
-} = require('librechat-data-provider');
+const { FileSources, PermissionTypes, Permissions } = require('librechat-data-provider');
 const {
   getFiles,
   updateFile,
@@ -37,7 +32,6 @@ const {
   getSharedLink,
   getSharedLinkFile,
   backfillSharedLinkFiles,
-  applyForcedRetention,
   getRoleByName,
 } = require('~/models');
 const { getStrategyFunctions } = require('~/server/services/Files/strategies');
@@ -73,14 +67,6 @@ const resolveSharedLinkExpiration = (req, conversationId) =>
       logger,
     },
   );
-
-/**
- * Converts the shared source conversation (and its messages) under forced (ephemeral)
- * retention, so sharing an older permanent chat does not leave it visible and non-expiring
- * after the public link itself expires; a no-op outside forced retention.
- */
-const enforceForcedRetention = (req, conversationId) =>
-  applyForcedRetention(conversationId, req?.user?.id, req?.config?.interfaceConfig);
 
 /**
  * Shared messages
@@ -468,22 +454,10 @@ router.post(
   async (req, res) => {
     try {
       const { targetMessageId } = req.body;
-      /**
-       * Convert the source conversation before creating the link. createSharedLink rejects
-       * when an active share already exists, so a retention failure after creation would
-       * leave a live share whose source chat never converts — no retry could reach the
-       * cascade again. Converting first also lets the share expiration below read the
-       * converted conversation's deadline.
-       */
-      await enforceForcedRetention(req, req.params.conversationId);
       const expiredAt = await resolveSharedLinkExpiration(req, req.params.conversationId);
       if (expiredAt != null && !isActiveExpirationDate(expiredAt)) {
         return res.status(404).end();
       }
-      const writeExpiredAt =
-        req.config?.interfaceConfig?.retentionMode === RetentionMode.EPHEMERAL
-          ? undefined
-          : expiredAt;
 
       const role = await getRoleByName(req.user.role);
       const sharedLinksPerms = role?.permissions?.[PermissionTypes.SHARED_LINKS] || {};
@@ -496,12 +470,11 @@ router.post(
         req.user.id,
         req.params.conversationId,
         targetMessageId,
-        writeExpiredAt,
+        expiredAt,
         snapshotFiles,
       );
       if (created) {
-        await grantCreationPermissions(created._id, req.user.id, grantPublic, writeExpiredAt);
-        await enforceForcedRetention(req, req.params.conversationId);
+        await grantCreationPermissions(created._id, req.user.id, grantPublic, expiredAt);
         res.status(200).json(created);
       } else {
         res.status(404).end();
@@ -532,24 +505,17 @@ router.patch('/:shareId', requireJwtAuth, configMiddleware, async (req, res) => 
     if (expiredAt != null && !isActiveExpirationDate(expiredAt)) {
       return res.status(404).end();
     }
-    const writeExpiredAt =
-      req.config?.interfaceConfig?.retentionMode === RetentionMode.EPHEMERAL
-        ? undefined
-        : expiredAt;
 
     const updatedShare = await updateSharedLink(
       req.user.id,
       req.params.shareId,
       targetMessageId,
-      writeExpiredAt,
+      expiredAt,
       isFileSnapshotEnabled(req.config) && req.body?.snapshotFiles !== false,
     );
     if (updatedShare) {
-      if (updatedShare._id && writeExpiredAt !== undefined) {
-        await updateSharedLinkPermissionsExpiration(updatedShare._id, writeExpiredAt);
-      }
-      if (existing?.conversationId) {
-        await enforceForcedRetention(req, existing.conversationId);
+      if (updatedShare._id && expiredAt !== undefined) {
+        await updateSharedLinkPermissionsExpiration(updatedShare._id, expiredAt);
       }
       res.status(200).json(updatedShare);
     } else {
