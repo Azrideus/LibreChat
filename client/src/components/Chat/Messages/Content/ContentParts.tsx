@@ -190,6 +190,17 @@ const ContentParts = memo(function ContentParts({
     () => files?.filter((file) => file.type?.startsWith('image/') !== true),
     [files],
   );
+  /** Rendered by every branch below, and by none of the parts: images already
+   * have an `image_file` part, and `Container` is only reached by messages that
+   * carry no content at all. Hoisted rather than inlined once so the edit and
+   * parallel paths cannot silently drop it the way the sequential path was the
+   * only one to handle. */
+  const filesSlot =
+    nonImageFiles != null && nonImageFiles.length > 0 ? (
+      <Container>
+        <Files files={nonImageFiles} />
+      </Container>
+    ) : null;
   const effectiveIsSubmitting = isLatestMessage ? isSubmitting : false;
   const toolGroupExpansionRef = useRef(new Map<string, ToolCallGroupExpansionState>());
   const fallbackScopeRef = useRef({ messageId, scope: 0 });
@@ -414,6 +425,7 @@ const ContentParts = memo(function ContentParts({
   if (edit === true && enterEdit && setSiblingIdx) {
     return (
       <>
+        {filesSlot}
         {(content ?? []).map((part, idx) => {
           if (!part) {
             return null;
@@ -462,6 +474,7 @@ const ContentParts = memo(function ContentParts({
   if (hasParallelContent) {
     return (
       <ApprovalProvider>
+        {filesSlot}
         {renderPendingSkills()}
         <ParallelContentRenderer
           content={content}
@@ -483,11 +496,7 @@ const ContentParts = memo(function ContentParts({
     <ApprovalProvider>
       <SearchContext.Provider value={{ searchResults }}>
         <MemoryArtifacts attachments={attachments} />
-        {nonImageFiles != null && nonImageFiles.length > 0 && (
-          <Container>
-            <Files files={nonImageFiles} />
-          </Container>
-        )}
+        {filesSlot}
         {renderPendingSkills()}
         {showEmptyCursor && (
           <Container>
