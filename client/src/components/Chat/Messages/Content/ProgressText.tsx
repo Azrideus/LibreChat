@@ -1,5 +1,6 @@
 import { ChevronDown } from 'lucide-react';
 import * as Popover from '@radix-ui/react-popover';
+import { disclosureChevronClassName } from './disclosure';
 import CancelledIcon from './CancelledIcon';
 import { cn } from '~/utils';
 
@@ -12,7 +13,7 @@ const Wrapper = ({ popover, children }: { popover: boolean; children: React.Reac
       <div className={wrapperClass}>
         <Popover.Trigger asChild>
           <div
-            className="progress-text-content absolute left-0 top-0 overflow-visible whitespace-nowrap"
+            className="progress-text-content absolute left-0 right-0 top-0 overflow-visible whitespace-nowrap"
             style={{ opacity: 1, transform: 'none' }}
           >
             {children}
@@ -25,7 +26,7 @@ const Wrapper = ({ popover, children }: { popover: boolean; children: React.Reac
   return (
     <div className={wrapperClass}>
       <div
-        className="progress-text-content absolute left-0 top-0 overflow-visible whitespace-nowrap"
+        className="progress-text-content absolute left-0 right-0 top-0 overflow-visible whitespace-nowrap"
         style={{ opacity: 1, transform: 'none' }}
       >
         {children}
@@ -87,7 +88,7 @@ export default function ProgressText({
       <button
         type="button"
         className={cn(
-          'inline-flex w-full items-center gap-2',
+          'group/disclosure inline-flex w-full items-center gap-2',
           hasInput
             ? 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-heavy'
             : 'pointer-events-none',
@@ -106,7 +107,8 @@ export default function ProgressText({
         {hasInput && (
           <ChevronDown
             className={cn(
-              'size-4 shrink-0 translate-y-[1px] transition-transform duration-200 ease-out',
+              disclosureChevronClassName,
+              'size-4 translate-y-[1px]',
               isExpanded && 'rotate-180',
             )}
             aria-hidden="true"
