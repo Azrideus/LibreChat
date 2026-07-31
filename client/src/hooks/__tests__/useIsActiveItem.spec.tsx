@@ -1,5 +1,5 @@
 /**
- * @jest-environment @happy-dom/jest-environment
+ * @jest-environment jsdom
  */
 import React from 'react';
 import { act, render } from '@testing-library/react';
@@ -26,8 +26,7 @@ describe('useIsActiveItem', () => {
 
     await act(async () => {
       probe.setAttribute('data-active-item', '');
-      // Allow the MutationObserver microtask to run
-      await Promise.resolve();
+      await new Promise((resolve) => setTimeout(resolve, 0));
     });
 
     expect(probe.getAttribute('data-active')).toBe('true');
@@ -39,13 +38,13 @@ describe('useIsActiveItem', () => {
 
     await act(async () => {
       probe.setAttribute('data-active-item', '');
-      await Promise.resolve();
+      await new Promise((resolve) => setTimeout(resolve, 0));
     });
     expect(probe.getAttribute('data-active')).toBe('true');
 
     await act(async () => {
       probe.removeAttribute('data-active-item');
-      await Promise.resolve();
+      await new Promise((resolve) => setTimeout(resolve, 0));
     });
     expect(probe.getAttribute('data-active')).toBe('false');
   });
@@ -56,7 +55,7 @@ describe('useIsActiveItem', () => {
 
     await act(async () => {
       probe.setAttribute('data-something-else', 'x');
-      await Promise.resolve();
+      await new Promise((resolve) => setTimeout(resolve, 0));
     });
 
     expect(probe.getAttribute('data-active')).toBe('false');
