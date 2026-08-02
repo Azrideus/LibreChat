@@ -201,6 +201,7 @@ describe('MCPConnectionFactory OAuth against real SDK Streamable HTTP server', (
         tokenMethods: {
           findToken: tokenStore.findToken,
           createToken: tokenStore.createToken,
+          upsertToken: jest.fn(),
           updateToken: tokenStore.updateToken,
           deleteTokens: tokenStore.deleteTokens,
         },
@@ -258,6 +259,7 @@ describe('MCPConnectionFactory OAuth against real SDK Streamable HTTP server', (
           tokenMethods: {
             findToken: tokenStore.findToken,
             createToken: tokenStore.createToken,
+            upsertToken: jest.fn(),
             updateToken: tokenStore.updateToken,
             deleteTokens: tokenStore.deleteTokens,
           },
