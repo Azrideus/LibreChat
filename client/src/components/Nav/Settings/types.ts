@@ -44,6 +44,8 @@ export interface SettingsContextValue {
   hasMultiConvo: boolean;
   hasPrompts: boolean;
   isLocalProvider: boolean;
+  emailEnabled: boolean;
+  allowEmailChange: boolean;
   twoFactorEnabled: boolean;
   allowAccountDeletion: boolean;
   aboutEnabled: boolean;

@@ -30,6 +30,7 @@ import DeleteAccount from '../SettingsTabs/Account/DeleteAccount';
 import { ForkSettings } from '../SettingsTabs/Chat/ForkSettings';
 import ChatDirection from '../SettingsTabs/Chat/ChatDirection';
 import { DeleteCache } from '../SettingsTabs/Data/DeleteCache';
+import ChangeEmail from '../SettingsTabs/Account/ChangeEmail';
 import { RevokeKeys } from '../SettingsTabs/Data/RevokeKeys';
 import { ClearChats } from '../SettingsTabs/Data/ClearChats';
 import { TokenCredits, AutoRefill } from './BillingControls';
@@ -547,6 +548,15 @@ export const registry: SettingEntry[] = [
     section: 'profile',
     labelKey: 'com_ui_settings_label_avatar',
     Component: Avatar,
+  },
+  {
+    id: 'changeEmail',
+    tab: ACCOUNT,
+    section: 'profile',
+    labelKey: 'com_ui_settings_label_change_email',
+    keywords: ['email', 'address', 'account'],
+    show: (ctx) => ctx.isLocalProvider && ctx.emailEnabled && ctx.allowEmailChange,
+    Component: ChangeEmail,
   },
   // Account · Security
   {
