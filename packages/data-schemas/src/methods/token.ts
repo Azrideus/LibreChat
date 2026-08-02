@@ -107,13 +107,18 @@ export function createTokenMethods(mongoose: typeof import('mongoose')): {
   ): Promise<IToken | null> {
     try {
       const Token = mongoose.models.Token;
+      const { metadataCredentialSetId, ...tokenQuery } = query;
+      const dbQuery: Record<string, unknown> = { ...tokenQuery };
+      if (metadataCredentialSetId !== undefined) {
+        dbQuery['metadata.credential_set_id'] = metadataCredentialSetId;
+      }
 
       const dataToUpdate = { ...updateData };
       if (updateData?.expiresIn !== undefined) {
         dataToUpdate.expiresAt = new Date(Date.now() + updateData.expiresIn * 1000);
       }
 
-      return await Token.findOneAndUpdate(query, dataToUpdate, { new: true });
+      return await Token.findOneAndUpdate(dbQuery, dataToUpdate, { new: true });
     } catch (error) {
       logger.debug('An error occurred while updating token:', error);
       throw error;
@@ -144,6 +149,9 @@ export function createTokenMethods(mongoose: typeof import('mongoose')): {
       }
       if (query.identifier !== undefined) {
         conditions.push({ identifier: query.identifier });
+      }
+      if (query.metadataCredentialSetId !== undefined) {
+        conditions.push({ 'metadata.credential_set_id': query.metadataCredentialSetId });
       }
 
       if (conditions.length === 0) {
@@ -186,6 +194,9 @@ export function createTokenMethods(mongoose: typeof import('mongoose')): {
       }
       if (query.identifier !== undefined) {
         conditions.push({ identifier: query.identifier });
+      }
+      if (query.metadataCredentialSetId !== undefined) {
+        conditions.push({ 'metadata.credential_set_id': query.metadataCredentialSetId });
       }
 
       const token = await Token.findOne({ $and: conditions }, null, options).lean();

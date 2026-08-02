@@ -31,6 +31,8 @@ export interface TokenQuery {
   type?: string | null;
   scope?: string;
   identifier?: string | RegExp | null;
+  /** Internal optimistic-concurrency selector for OAuth token record generations. */
+  metadataCredentialSetId?: string | null;
 }
 
 export interface TokenUpdateData {
