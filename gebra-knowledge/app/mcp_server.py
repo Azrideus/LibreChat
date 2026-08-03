@@ -26,7 +26,7 @@ vectorstore = PGVector(
     use_jsonb=True,
 )
 
-mcp = FastMCP("gebra-knowledge", stateless_http=True)
+mcp = FastMCP("gebra-knowledge", stateless_http=True, host="0.0.0.0", port=8000)
 
 
 @mcp.tool()
