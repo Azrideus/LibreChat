@@ -241,13 +241,13 @@ registration:
   # - "gmail.com"
 
 # Example Balance settings
-# balance:
-#   enabled: false
-#   startBalance: 20000
-#   autoRefillEnabled: false
-#   refillIntervalValue: 30
-#   refillIntervalUnit: 'days'
-#   refillAmount: 10000
+balance:
+  enabled: true
+  startBalance: 10000
+  autoRefillEnabled: true
+  refillIntervalValue: 1
+  refillIntervalUnit: 'days'
+  refillAmount: 10000
 
 # Example Transactions settings
 # Controls whether to save transaction records to the database

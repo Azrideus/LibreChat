@@ -1,0 +1,5 @@
+mcp[cli]
+langchain-huggingface
+langchain-postgres
+psycopg[binary]
+sentence-transformers
