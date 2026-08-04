@@ -3,7 +3,12 @@ langchain-text-splitters
 langchain-huggingface
 langchain-postgres
 psycopg[binary]
+
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch 
 sentence-transformers
+
 pypdf
 unstructured[md]
 docx2txt
+pymupdf4llm

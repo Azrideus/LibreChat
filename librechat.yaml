@@ -211,11 +211,11 @@ registration:
 # Example Balance settings
 balance:
   enabled: true
-  startBalance: 10000
+  startBalance: 100000
   autoRefillEnabled: true
   refillIntervalValue: 1
   refillIntervalUnit: 'days'
-  refillAmount: 10000
+  refillAmount: 100000
 
 # Example Transactions settings
 # Controls whether to save transaction records to the database

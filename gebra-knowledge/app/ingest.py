@@ -1,7 +1,9 @@
 import os
 import glob
+import pymupdf4llm
+from langchain_core.documents import Document
 from langchain_community.document_loaders import (
-    PyPDFLoader, TextLoader, UnstructuredMarkdownLoader, Docx2txtLoader
+    TextLoader, UnstructuredMarkdownLoader, Docx2txtLoader
 )
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_huggingface import HuggingFaceEmbeddings
@@ -23,8 +25,34 @@ CONNECTION_STRING = (
     f"@{DB_HOST}:{DB_PORT}/{POSTGRES_DB}"
 )
 
+
+class PyMuPDF4LLMLoader:
+    """Drop-in replacement for PyPDFLoader with the same `.load()`
+    interface, using pymupdf4llm's markdown-aware extraction for
+    better table/heading fidelity."""
+
+    def __init__(self, file_path):
+        self.file_path = file_path
+
+    def load(self):
+        md_pages = pymupdf4llm.to_markdown(self.file_path, page_chunks=True)
+
+        docs = []
+        for i, page_data in enumerate(md_pages, start=1):
+            text = page_data.get("text", "")
+            if not text:
+                continue
+            docs.append(
+                Document(
+                    page_content=text,
+                    metadata={"source": self.file_path, "page": i},
+                )
+            )
+        return docs
+
+
 LOADERS = {
-    ".pdf": PyPDFLoader,
+    ".pdf": PyMuPDF4LLMLoader,
     ".md": UnstructuredMarkdownLoader,
     ".txt": TextLoader,
     ".docx": Docx2txtLoader,
