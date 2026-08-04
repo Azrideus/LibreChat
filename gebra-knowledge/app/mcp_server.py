@@ -10,7 +10,7 @@ POSTGRES_USER = os.environ["POSTGRES_USER"]
 POSTGRES_PASSWORD = os.environ["POSTGRES_PASSWORD"]
 COLLECTION_NAME = os.environ.get("COLLECTION_NAME", "global_knowledge")
 EMBEDDINGS_MODEL = os.environ.get(
-    "EMBEDDINGS_MODEL", "sentence-transformers/all-MiniLM-L6-v2"
+    "EMBEDDINGS_MODEL", "BAAI/bge-m3"
 )
 
 CONNECTION_STRING = (
@@ -26,7 +26,8 @@ vectorstore = PGVector(
     use_jsonb=True,
 )
 
-mcp = FastMCP("gebra-knowledge", stateless_http=True, host="0.0.0.0", port=8000)
+mcp = FastMCP("gebra-knowledge", stateless_http=True,
+              host="0.0.0.0", port=8000)
 
 
 @mcp.tool()
@@ -42,7 +43,8 @@ def search_global_knowledge(query: str, top_k: int = 5) -> str:
     blocks = []
     for doc, score in results:
         source = doc.metadata.get("source", "unknown")
-        blocks.append(f"[source: {source} | score: {score:.4f}]\n{doc.page_content}")
+        blocks.append(
+            f"[source: {source} | score: {score:.4f}]\n{doc.page_content}")
     return "\n\n---\n\n".join(blocks)
 
 

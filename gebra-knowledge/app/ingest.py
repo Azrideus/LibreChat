@@ -14,7 +14,7 @@ POSTGRES_USER = os.environ["POSTGRES_USER"]
 POSTGRES_PASSWORD = os.environ["POSTGRES_PASSWORD"]
 COLLECTION_NAME = os.environ.get("COLLECTION_NAME", "global_knowledge")
 EMBEDDINGS_MODEL = os.environ.get(
-    "EMBEDDINGS_MODEL", "sentence-transformers/all-MiniLM-L6-v2"
+    "EMBEDDINGS_MODEL", "BAAI/bge-m3"
 )
 DOCS_DIR = os.environ.get("DOCS_DIR", "/app/docs")
 
@@ -56,7 +56,8 @@ def main():
     raw_docs = load_documents()
     print(f"Loaded {len(raw_docs)} raw documents")
 
-    splitter = RecursiveCharacterTextSplitter(chunk_size=1500, chunk_overlap=100)
+    splitter = RecursiveCharacterTextSplitter(
+        chunk_size=1500, chunk_overlap=100)
     chunks = splitter.split_documents(raw_docs)
     print(f"Split into {len(chunks)} chunks")
 
