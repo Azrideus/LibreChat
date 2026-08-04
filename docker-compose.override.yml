@@ -36,6 +36,7 @@ services:
     image: registry.librechat.ai/danny-avila/librechat-rag-api-dev:latest
   gebra-knowledge-mcp:
     build: ./gebra-knowledge/app
+    image: gebra-knowledge-app
     container_name: gebra-knowledge-mcp
     environment:
       - DB_HOST=vectordb
@@ -50,6 +51,7 @@ services:
       - vectordb
   gebra-knowledge-ingest:
     build: ./gebra-knowledge/app
+    image: gebra-knowledge-app
     container_name: gebra-knowledge-ingest
     profiles: ["tools"]
     entrypoint: ["python", "ingest.py"]
