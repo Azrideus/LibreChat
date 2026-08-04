@@ -45,7 +45,10 @@ services:
       - POSTGRES_USER=myuser
       - POSTGRES_PASSWORD=mypassword
       - COLLECTION_NAME=global_knowledge
-      - EMBEDDINGS_MODEL=BAAI/bge-m3
+      - EMBEDDINGS_MODEL=intfloat/multilingual-e5-small
+      - HF_TOKEN=${HF_TOKEN}
+    volumes:
+      - hf_cache:/root/.cache/huggingface
     restart: unless-stopped
     depends_on:
       - vectordb
@@ -62,12 +65,17 @@ services:
       - POSTGRES_USER=myuser
       - POSTGRES_PASSWORD=mypassword
       - COLLECTION_NAME=global_knowledge
-      - EMBEDDINGS_MODEL=BAAI/bge-m3
+      - EMBEDDINGS_MODEL=intfloat/multilingual-e5-small
       - DOCS_DIR=/app/docs
+      - HF_TOKEN=${HF_TOKEN}
     volumes:
       - ./gebra-knowledge/docs:/app/docs:ro
+      - hf_cache:/root/.cache/huggingface
     depends_on:
       - vectordb
+
+volumes:
+  hf_cache:
 
 # ---------------------------------------------------
 

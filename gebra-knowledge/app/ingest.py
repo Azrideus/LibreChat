@@ -1,13 +1,13 @@
 import os
 import glob
-import pymupdf4llm
-from langchain_core.documents import Document
+import hashlib
 from langchain_community.document_loaders import (
     TextLoader, UnstructuredMarkdownLoader, Docx2txtLoader
 )
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_postgres import PGVector
+from PyMuPDF4LLMLoader import PyMuPDF4LLMLoader
 
 DB_HOST = os.environ["DB_HOST"]
 DB_PORT = os.environ.get("DB_PORT", "5432")
@@ -16,7 +16,7 @@ POSTGRES_USER = os.environ["POSTGRES_USER"]
 POSTGRES_PASSWORD = os.environ["POSTGRES_PASSWORD"]
 COLLECTION_NAME = os.environ.get("COLLECTION_NAME", "global_knowledge")
 EMBEDDINGS_MODEL = os.environ.get(
-    "EMBEDDINGS_MODEL", "BAAI/bge-m3"
+    "EMBEDDINGS_MODEL", "intfloat/multilingual-e5-small"
 )
 DOCS_DIR = os.environ.get("DOCS_DIR", "/app/docs")
 
@@ -24,31 +24,6 @@ CONNECTION_STRING = (
     f"postgresql+psycopg://{POSTGRES_USER}:{POSTGRES_PASSWORD}"
     f"@{DB_HOST}:{DB_PORT}/{POSTGRES_DB}"
 )
-
-
-class PyMuPDF4LLMLoader:
-    """Drop-in replacement for PyPDFLoader with the same `.load()`
-    interface, using pymupdf4llm's markdown-aware extraction for
-    better table/heading fidelity."""
-
-    def __init__(self, file_path):
-        self.file_path = file_path
-
-    def load(self):
-        md_pages = pymupdf4llm.to_markdown(self.file_path, page_chunks=True)
-
-        docs = []
-        for i, page_data in enumerate(md_pages, start=1):
-            text = page_data.get("text", "")
-            if not text:
-                continue
-            docs.append(
-                Document(
-                    page_content=text,
-                    metadata={"source": self.file_path, "page": i},
-                )
-            )
-        return docs
 
 
 LOADERS = {
@@ -59,16 +34,77 @@ LOADERS = {
 }
 
 
-def load_documents():
-    docs = []
+def hash_file(path):
+    digest = hashlib.sha256()
+    with open(path, "rb") as f:
+        for block in iter(lambda: f.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def discover_files():
+    files = {}
     for path in glob.glob(f"{DOCS_DIR}/**/*", recursive=True):
         ext = os.path.splitext(path)[1].lower()
-        loader_cls = LOADERS.get(ext)
-        if not loader_cls or os.path.isdir(path):
+        if ext not in LOADERS or os.path.isdir(path):
             continue
-        print(f"Loading {path}")
-        docs.extend(loader_cls(path).load())
-    return docs
+        files[path] = hash_file(path)
+    return files
+
+
+def get_indexed_hashes(vectorstore):
+    """Map of source path -> file_hash already stored in the collection."""
+    with vectorstore._make_sync_session() as session:
+        collection = vectorstore.get_collection(session)
+        if collection is None:
+            return {}
+        rows = session.query(
+            vectorstore.EmbeddingStore.cmetadata["source"].astext,
+            vectorstore.EmbeddingStore.cmetadata["file_hash"].astext,
+        ).filter(
+            vectorstore.EmbeddingStore.collection_id == collection.uuid
+        ).distinct().all()
+    return {source: file_hash for source, file_hash in rows}
+
+
+def delete_sources(vectorstore, sources):
+    if not sources:
+        return
+    with vectorstore._make_sync_session() as session:
+        collection = vectorstore.get_collection(session)
+        if collection is None:
+            return
+        session.query(vectorstore.EmbeddingStore).filter(
+            vectorstore.EmbeddingStore.collection_id == collection.uuid,
+            vectorstore.EmbeddingStore.cmetadata["source"].astext.in_(sources),
+        ).delete(synchronize_session=False)
+        session.commit()
+
+
+def count_rows(vectorstore):
+    with vectorstore._make_sync_session() as session:
+        collection = vectorstore.get_collection(session)
+        if collection is None:
+            return 0
+        return session.query(vectorstore.EmbeddingStore).filter(
+            vectorstore.EmbeddingStore.collection_id == collection.uuid
+        ).count()
+
+
+def load_and_split(path, file_hash, splitter):
+    ext = os.path.splitext(path)[1].lower()
+    loader_cls = LOADERS[ext]
+    print(f"----")
+    print(f"File: {path}")
+    print(f" → Loading...")
+    docs = loader_cls(path).load()
+    for doc in docs:
+        doc.metadata["source"] = path
+        doc.metadata["file_hash"] = file_hash
+    chunks = splitter.split_documents(docs)
+    print(f" Split into {len(chunks)} chunks")
+    print(f"----")
+    return chunks
 
 
 def main():
@@ -81,22 +117,55 @@ def main():
         use_jsonb=True,
     )
 
-    raw_docs = load_documents()
-    print(f"Loaded {len(raw_docs)} raw documents")
+    current_files = discover_files()
+    indexed_hashes = get_indexed_hashes(vectorstore)
 
+    changed_paths = [
+        path for path, file_hash in current_files.items()
+        if indexed_hashes.get(path) != file_hash
+    ]
+    removed_paths = [
+        path for path in indexed_hashes
+        if path not in current_files
+    ]
+
+    print(
+        f"ℹ️  Found {len(current_files)} docs "
+        f"({len(changed_paths)} new/changed, "
+        f"{len(current_files) - len(changed_paths)} unchanged, "
+        f"{len(removed_paths)} removed)"
+    )
+
+    print(
+        "🗑️ Deleting stale sources from the vector store..."
+    )
+    stale_sources = set(changed_paths) | set(removed_paths)
+    delete_sources(vectorstore, stale_sources)
+    print("✅ Done deleting stale sources.")
+
+    if not changed_paths:
+        print("Nothing to re-index.")
+        print(f"📊 Vector store now has {count_rows(vectorstore)} rows")
+        return
+
+    print(
+        "🧭 Indexing new/changed files into the vector store..."
+    )
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=1500, chunk_overlap=100)
-    chunks = splitter.split_documents(raw_docs)
-    print(f"Split into {len(chunks)} chunks")
 
-    # Wipe and re-add for a clean re-index each run.
-    # Comment this out if you'd rather append incrementally.
-    vectorstore.delete_collection()
-    vectorstore.create_collection()
+    chunks = []
+    for path in changed_paths:
+        chunks.extend(load_and_split(path, current_files[path], splitter))
 
+    print(f"✅ Split into {len(chunks)} chunks")
+    # ---------------------------------------------------------------------------- #
+    print(f"Adding into vector store...")
     vectorstore.add_documents(chunks)
-    print(f"Indexed {len(chunks)} chunks into collection '{COLLECTION_NAME}'")
+    print(f"✅ Indexed {len(chunks)} chunks for {len(changed_paths)} file(s)")
+    print(f"📊 Vector store now has {count_rows(vectorstore)} rows")
 
 
 if __name__ == "__main__":
     main()
+    os._exit(0)

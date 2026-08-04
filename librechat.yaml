@@ -334,6 +334,7 @@ mcpServers:
     timeout: 30000
     chatMenu: true
     serverInstructions: true
+    startup: true
     description: 'tutorials, knowledge, datasheet and application notes of different productsused by GEBRABIT'
 #   everything:
 #     # type: sse # type can optionally be omitted

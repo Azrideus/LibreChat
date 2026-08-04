@@ -10,7 +10,7 @@ POSTGRES_USER = os.environ["POSTGRES_USER"]
 POSTGRES_PASSWORD = os.environ["POSTGRES_PASSWORD"]
 COLLECTION_NAME = os.environ.get("COLLECTION_NAME", "global_knowledge")
 EMBEDDINGS_MODEL = os.environ.get(
-    "EMBEDDINGS_MODEL", "BAAI/bge-m3"
+    "EMBEDDINGS_MODEL", "intfloat/multilingual-e5-small"
 )
 
 CONNECTION_STRING = (

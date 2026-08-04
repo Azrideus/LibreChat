@@ -10,7 +10,7 @@ POSTGRES_USER = os.environ["POSTGRES_USER"]
 POSTGRES_PASSWORD = os.environ["POSTGRES_PASSWORD"]
 COLLECTION_NAME = os.environ.get("COLLECTION_NAME", "global_knowledge")
 EMBEDDINGS_MODEL = os.environ.get(
-    "EMBEDDINGS_MODEL", "BAAI/bge-m3"
+    "EMBEDDINGS_MODEL", "intfloat/multilingual-e5-small"
 )
 
 CONNECTION_STRING = (
@@ -38,7 +38,11 @@ def search_global_knowledge(query: str, top_k: int = 5) -> str:
     than general/public knowledge."""
     results = vectorstore.similarity_search_with_score(query, k=top_k)
     if not results:
-        total_rows = vectorstore.collection.count()
+        with vectorstore._make_sync_session() as session:
+            collection = vectorstore.get_collection(session)
+            total_rows = session.query(vectorstore.EmbeddingStore).filter(
+                vectorstore.EmbeddingStore.collection_id == collection.uuid
+            ).count()
         return f"No relevant results found in the knowledge base (searched {total_rows} rows)."
 
     blocks = []

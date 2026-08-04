@@ -6,4 +6,10 @@ docker compose --profile tools run --rm gebra-knowledge-ingest
 
 
 <!-- ----------------------------- Add Balance ----------------------------- -->
-docker compose exec api npm run add-balance mehrdadtavangar@gmail.com 50000
+docker compose --profile tools run --rm --name gebra-knowledge-ingest gebra-knowledge-ingest
+
+
+
+<!-- ------------------ Rebuild each time you change code ------------------ -->
+docker compose --profile tools build gebra-knowledge-ingest
+docker compose --profile tools run --rm --name gebra-knowledge-ingest gebra-knowledge-ingest
