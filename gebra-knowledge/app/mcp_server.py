@@ -38,7 +38,8 @@ def search_global_knowledge(query: str, top_k: int = 5) -> str:
     than general/public knowledge."""
     results = vectorstore.similarity_search_with_score(query, k=top_k)
     if not results:
-        return "No relevant results found in the knowledge base."
+        total_rows = vectorstore.collection.count()
+        return f"No relevant results found in the knowledge base (searched {total_rows} rows)."
 
     blocks = []
     for doc, score in results:
