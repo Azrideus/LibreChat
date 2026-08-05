@@ -1,6 +1,8 @@
 import os
 import glob
 import hashlib
+from sqlalchemy import create_engine, text
+from sqlalchemy.exc import ProgrammingError
 from langchain_community.document_loaders import (
     TextLoader, UnstructuredMarkdownLoader, Docx2txtLoader
 )
@@ -8,13 +10,13 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_postgres import PGVector
 from PyMuPDF4LLMLoader import PyMuPDF4LLMLoader
+from categories import CATEGORIES
 
 DB_HOST = os.environ["DB_HOST"]
 DB_PORT = os.environ.get("DB_PORT", "5432")
 POSTGRES_DB = os.environ["POSTGRES_DB"]
 POSTGRES_USER = os.environ["POSTGRES_USER"]
 POSTGRES_PASSWORD = os.environ["POSTGRES_PASSWORD"]
-COLLECTION_NAME = os.environ.get("COLLECTION_NAME", "global_knowledge")
 EMBEDDINGS_MODEL = os.environ.get(
     "EMBEDDINGS_MODEL", "intfloat/multilingual-e5-small"
 )
@@ -42,9 +44,9 @@ def hash_file(path):
     return digest.hexdigest()
 
 
-def discover_files():
+def discover_files(category_dir):
     files = {}
-    for path in glob.glob(f"{DOCS_DIR}/**/*", recursive=True):
+    for path in glob.glob(f"{category_dir}/**/*", recursive=True):
         ext = os.path.splitext(path)[1].lower()
         if ext not in LOADERS or os.path.isdir(path):
             continue
@@ -106,18 +108,24 @@ def load_and_split(path, file_hash, splitter):
     print(f"----")
     return chunks
 
+# ---------------------------------------------------------------------------- #
 
-def main():
-    embeddings = HuggingFaceEmbeddings(model_name=EMBEDDINGS_MODEL)
+
+def ingest_category(category, embeddings, splitter):
+    print(f"\n=== Category: {category['key']} ({category['collection']}) ===")
+    category_dir = os.path.join(DOCS_DIR, category["folder"])
+    if not os.path.isdir(category_dir):
+        print(f"⚠️  Folder {category_dir} does not exist, skipping.")
+        return
 
     vectorstore = PGVector(
         embeddings=embeddings,
-        collection_name=COLLECTION_NAME,
+        collection_name=category["collection"],
         connection=CONNECTION_STRING,
         use_jsonb=True,
     )
 
-    current_files = discover_files()
+    current_files = discover_files(category_dir)
     indexed_hashes = get_indexed_hashes(vectorstore)
 
     changed_paths = [
@@ -136,34 +144,76 @@ def main():
         f"{len(removed_paths)} removed)"
     )
 
-    print(
-        "🗑️ Deleting stale sources from the vector store..."
-    )
     stale_sources = set(changed_paths) | set(removed_paths)
-    delete_sources(vectorstore, stale_sources)
-    print("✅ Done deleting stale sources.")
+    if stale_sources:
+        print(
+            f"🗑️  Deleting {len(stale_sources)} stale sources from the vector store...")
+        delete_sources(vectorstore, stale_sources)
+        print("✅ Done deleting stale sources.")
 
     if not changed_paths:
         print("Nothing to re-index.")
-        print(f"📊 Vector store now has {count_rows(vectorstore)} rows")
+        print(
+            f"📊 Collection '{category['collection']}' now has {count_rows(vectorstore)} rows")
         return
 
-    print(
-        "🧭 Indexing new/changed files into the vector store..."
-    )
-    splitter = RecursiveCharacterTextSplitter(
-        chunk_size=1500, chunk_overlap=100)
-
+    print("🧭 Indexing new/changed files into the vector store...")
     chunks = []
     for path in changed_paths:
         chunks.extend(load_and_split(path, current_files[path], splitter))
 
     print(f"✅ Split into {len(chunks)} chunks")
-    # ---------------------------------------------------------------------------- #
     print(f"Adding into vector store...")
     vectorstore.add_documents(chunks)
     print(f"✅ Indexed {len(chunks)} chunks for {len(changed_paths)} file(s)")
-    print(f"📊 Vector store now has {count_rows(vectorstore)} rows")
+    print(
+        f"📊 Collection '{category['collection']}' now has {count_rows(vectorstore)} rows")
+
+
+def get_existing_collection_names(engine):
+    with engine.connect() as conn:
+        try:
+            rows = conn.execute(
+                text("SELECT name FROM langchain_pg_collection")
+            ).all()
+        except ProgrammingError:
+            return set()
+    return {row[0] for row in rows}
+
+
+def prune_orphaned_collections(engine, embeddings, known_collections):
+    """Drop collections left behind by categories renamed/removed from categories.py."""
+    orphaned = get_existing_collection_names(engine) - known_collections
+    if not orphaned:
+        return
+
+    print(f"\n=== Pruning orphaned collections ===")
+    print(f"⚠️  Found {len(orphaned)} collection(s) with no matching category: "
+          f"{sorted(orphaned)}")
+    for name in sorted(orphaned):
+        vectorstore = PGVector(
+            embeddings=embeddings,
+            collection_name=name,
+            connection=CONNECTION_STRING,
+            use_jsonb=True,
+        )
+        rows = count_rows(vectorstore)
+        vectorstore.delete_collection()
+        print(f"🗑️ Dropped orphaned collection '{name}' ({rows} rows)")
+
+
+def main():
+    embeddings = HuggingFaceEmbeddings(model_name=EMBEDDINGS_MODEL)
+    splitter = RecursiveCharacterTextSplitter(
+        chunk_size=1500, chunk_overlap=100)
+
+    for category in CATEGORIES:
+        ingest_category(category, embeddings, splitter)
+
+    engine = create_engine(CONNECTION_STRING)
+    known_collections = {category["collection"] for category in CATEGORIES}
+    prune_orphaned_collections(engine, embeddings, known_collections)
+    engine.dispose()
 
 
 if __name__ == "__main__":

@@ -1,5 +1,7 @@
 mcp[cli]>=1.9.0
 fastmcp
+starlette
+uvicorn
 langchain-huggingface
 langchain-postgres
 psycopg[binary]

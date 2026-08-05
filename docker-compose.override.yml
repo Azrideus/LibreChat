@@ -44,7 +44,6 @@ services:
       - POSTGRES_DB=global_knowledge
       - POSTGRES_USER=myuser
       - POSTGRES_PASSWORD=mypassword
-      - COLLECTION_NAME=global_knowledge
       - EMBEDDINGS_MODEL=intfloat/multilingual-e5-small
       - HF_TOKEN=${HF_TOKEN}
     volumes:
@@ -64,7 +63,6 @@ services:
       - POSTGRES_DB=global_knowledge
       - POSTGRES_USER=myuser
       - POSTGRES_PASSWORD=mypassword
-      - COLLECTION_NAME=global_knowledge
       - EMBEDDINGS_MODEL=intfloat/multilingual-e5-small
       - DOCS_DIR=/app/docs
       - HF_TOKEN=${HF_TOKEN}

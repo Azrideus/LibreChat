@@ -326,16 +326,47 @@ mcpSettings:
    - 'gebra-knowledge-mcp:8000'
 #     - '127.0.0.1:8080'
 
+
+# ---------------------------------------------------------------------------- #
+#                                  MCP SERVERS                                 #
+# ---------------------------------------------------------------------------- #
 # Example MCP Servers Object Structure
+# GEBRABIT knowledge base: one container (gebra-knowledge-mcp) hosting 4
+# independent MCP endpoints, one per category, so each shows as its own
+# entry in the chat MCP dropdown and can be toggled independently.
 mcpServers:
-  gebra-knowledge:
+  gebra-datasheets:
     type: streamable-http
-    url: http://gebra-knowledge-mcp:8000/mcp
+    url: http://gebra-knowledge-mcp:8000/datasheets/mcp
     timeout: 30000
     chatMenu: true
     serverInstructions: true
     startup: true
-    description: 'tutorials, knowledge, datasheet and application notes of different productsused by GEBRABIT'
+    description: 'Component/chip datasheets (electrical characteristics, pinouts, register maps)'
+  gebra-codding:
+    type: streamable-http
+    url: http://gebra-knowledge-mcp:8000/codding/mcp
+    timeout: 30000
+    chatMenu: true
+    serverInstructions: true
+    startup: true
+    description: 'C/C++ Coding reference books, examples, and best practices for embedded systems and microcontrollers.'
+  gebra-math:
+    type: streamable-http
+    url: http://gebra-knowledge-mcp:8000/math/mcp
+    timeout: 30000
+    chatMenu: true
+    serverInstructions: true
+    startup: true
+    description: 'Math and Physics books, formulas, equations and reference tables.'
+  # gebra-general:
+  #   type: streamable-http
+  #   url: http://gebra-knowledge-mcp:8000/general/mcp
+  #   timeout: 30000
+  #   chatMenu: true
+  #   serverInstructions: true
+  #   startup: true
+  #   description: 'General internal knowledge base: policies, procedures, and other internal notes.'
 #   everything:
 #     # type: sse # type can optionally be omitted
 #     url: http://localhost:3001/sse
