@@ -7,26 +7,11 @@ from langchain_community.document_loaders import (
     TextLoader, UnstructuredMarkdownLoader, Docx2txtLoader
 )
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_postgres import PGVector
-from PyMuPDF4LLMLoader import PyMuPDF4LLMLoader
-from categories import CATEGORIES
-
-DB_HOST = os.environ["DB_HOST"]
-DB_PORT = os.environ.get("DB_PORT", "5432")
-POSTGRES_DB = os.environ["POSTGRES_DB"]
-POSTGRES_USER = os.environ["POSTGRES_USER"]
-POSTGRES_PASSWORD = os.environ["POSTGRES_PASSWORD"]
-EMBEDDINGS_MODEL = os.environ.get(
-    "EMBEDDINGS_MODEL", "intfloat/multilingual-e5-small"
-)
-DOCS_DIR = os.environ.get("DOCS_DIR", "/app/docs")
-
-CONNECTION_STRING = (
-    f"postgresql+psycopg://{POSTGRES_USER}:{POSTGRES_PASSWORD}"
-    f"@{DB_HOST}:{DB_PORT}/{POSTGRES_DB}"
-)
-
+from lib.PyMuPDF4LLMLoader import PyMuPDF4LLMLoader
+from lib.categories import CATEGORIES
+from lib.embeddings import build_embeddings
+from lib.config import DOCS_DIR, CONNECTION_STRING
 
 LOADERS = {
     ".pdf": PyMuPDF4LLMLoader,
@@ -203,7 +188,7 @@ def prune_orphaned_collections(engine, embeddings, known_collections):
 
 
 def main():
-    embeddings = HuggingFaceEmbeddings(model_name=EMBEDDINGS_MODEL)
+    embeddings = build_embeddings()
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=1500, chunk_overlap=100)
 

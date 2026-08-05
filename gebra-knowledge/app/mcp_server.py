@@ -1,34 +1,31 @@
-import os
 import contextlib
 
 import uvicorn
 from starlette.applications import Starlette
 from starlette.routing import Mount
 from mcp.server.fastmcp import FastMCP
-from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_postgres import PGVector
-from categories import CATEGORIES
-
-DB_HOST = os.environ["DB_HOST"]
-DB_PORT = os.environ.get("DB_PORT", "5432")
-POSTGRES_DB = os.environ["POSTGRES_DB"]
-POSTGRES_USER = os.environ["POSTGRES_USER"]
-POSTGRES_PASSWORD = os.environ["POSTGRES_PASSWORD"]
-EMBEDDINGS_MODEL = os.environ.get(
-    "EMBEDDINGS_MODEL", "intfloat/multilingual-e5-small"
+from lib.categories import CATEGORIES
+from lib.embeddings import build_embeddings
+from lib.config import (
+    CONNECTION_STRING,
+    MIN_TOP_K,
+    MAX_TOP_K,
+    DEFAULT_TOP_K,
+    MMR_FETCH_MULTIPLIER,
 )
 
-CONNECTION_STRING = (
-    f"postgresql+psycopg://{POSTGRES_USER}:{POSTGRES_PASSWORD}"
-    f"@{DB_HOST}:{DB_PORT}/{POSTGRES_DB}"
-)
-
-embeddings = HuggingFaceEmbeddings(model_name=EMBEDDINGS_MODEL)
+embeddings = build_embeddings()
 
 
 def make_search_tool(category, vectorstore):
-    def search(query: str, top_k: int = 5) -> str:
-        results = vectorstore.similarity_search_with_score(query, k=top_k)
+    def search(query: str, top_k: int = DEFAULT_TOP_K) -> str:
+        top_k = max(MIN_TOP_K, min(top_k, MAX_TOP_K))
+        results = vectorstore.max_marginal_relevance_search_with_score_by_vector(
+            embeddings.embed_query(query),
+            k=top_k,
+            fetch_k=top_k * MMR_FETCH_MULTIPLIER,
+        )
         if not results:
             with vectorstore._make_sync_session() as session:
                 collection = vectorstore.get_collection(session)
@@ -68,7 +65,8 @@ def build_server(category: dict) -> FastMCP:
     # from auto-enabling Host-header DNS-rebinding protection, which would
     # otherwise reject requests arriving with Host: gebra-knowledge-mcp:8000
     # from other containers on the Docker network.
-    server = FastMCP(f"gebra-{category['key']}", stateless_http=True, host="0.0.0.0", port=8000)
+    server = FastMCP(
+        f"gebra-{category['key']}", stateless_http=True, host="0.0.0.0", port=8000)
     server.tool(name=category["tool_name"], description=category["description"])(
         make_search_tool(category, vectorstore)
     )
