@@ -8,7 +8,7 @@ import type { IJobStore, IJobStoreV2 } from './interfaces/IJobStore';
  * while rejecting an implementation that cannot provide the atomic guarantees
  * required by the current generation manager.
  */
-export const JOB_STORE_V2_REQUIRED_METHODS = [
+const REQUIRED_V2_METHODS = [
   'acknowledgeReplacedJobs',
   'finalizeTerminalPersistence',
   'transitionStatusAndDrainSteers',
@@ -26,7 +26,16 @@ export const JOB_STORE_V2_REQUIRED_METHODS = [
   'claimParkedSteersDetailed',
   'consumeParkedSteer',
   'discardSteerLeftover',
-] as const satisfies ReadonlyArray<keyof IJobStoreV2>;
+] as const;
+
+/**
+ * Members are checked against `keyof IJobStoreV2` by the
+ * `_AllV2MethodsHaveRuntimeChecks` tripwire below rather than an inline
+ * `satisfies`: `--isolatedDeclarations` (used for fast dts generation, see
+ * `tsdown.config.mjs`) can't infer the type of a `satisfies` expression, so
+ * this stays a plain `as const` literal that oxc can read directly.
+ */
+export const JOB_STORE_V2_REQUIRED_METHODS: typeof REQUIRED_V2_METHODS = REQUIRED_V2_METHODS;
 
 export type JobStoreV2RequiredMethod = (typeof JOB_STORE_V2_REQUIRED_METHODS)[number];
 

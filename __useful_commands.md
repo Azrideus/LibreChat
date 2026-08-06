@@ -1,8 +1,12 @@
-docker compose down --remove-orphans
-docker network prune -f
-docker compose up -d --build
+docker compose down --remove-orphans 
+docker compose up -d
 
-docker compose --profile tools run --rm gebra-knowledge-ingest
+docker compose up -d --build
+<!-- --------------------------- Build Frontend ---------------------------- -->
+
+npm run frontend
+docker compose down --remove-orphans
+docker compose up -d
 
 
 <!-- ----------------------------- Add Balance ----------------------------- -->

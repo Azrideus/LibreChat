@@ -6,7 +6,10 @@
     "inlineSources": true,
     "removeComments": false,
     "preserveConstEnums": true,
-    "declarationMap": true
+    "declarationMap": true,
+    "skipLibCheck": true,
+    "isolatedDeclarations": true,
+    "noEmitOnError": false
   },
   "exclude": ["node_modules", "dist", "types", "src/**/*.test.ts", "src/**/*.spec.ts"]
 }

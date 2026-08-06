@@ -19,10 +19,17 @@ services:
     ports:
       - "6379:6379"
   api:
+    image: librechat
+    build:
+      context: .
+      target: node
     volumes:
       - type: bind
         source: ./librechat.yaml
         target: /app/librechat.yaml
+      - type: bind
+        source: ./client/dist
+        target: /app/client/dist
   searxng:
     image: searxng/searxng:latest
     container_name: searxng
