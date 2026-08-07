@@ -1,7 +1,7 @@
 use_default_settings: true
 
 server:
-  secret_key: 'change-me-to-a-long-random-string'
+  secret_key: '244ff3169dd0e2f9394443f91f99101002a1b18c31fa46145970c3e89f8ddcd8'
   limiter: false
   image_proxy: true
 

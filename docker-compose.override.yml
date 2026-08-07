@@ -38,7 +38,74 @@ services:
     volumes:
       - ./searxng/settings.yml:/etc/searxng/settings.yml:ro
     restart: always
-    # USE RAG API IMAGE WITH LOCAL EMBEDDINGS SUPPORT
+  # ---- Self-hosted Firecrawl (used as the webSearch scraperProvider) ----
+  # Prebuilt images from the official self-host compose file, renamed to
+  # avoid clashing with LibreChat's own `api` service.
+  firecrawl-playwright:
+    image: ghcr.io/firecrawl/playwright-service:latest
+    container_name: firecrawl-playwright
+    restart: unless-stopped
+    environment:
+      PORT: 3000
+      MAX_CONCURRENT_PAGES: ${FIRECRAWL_CRAWL_CONCURRENCY:-10}
+  firecrawl-redis:
+    image: redis:alpine
+    container_name: firecrawl-redis
+    restart: unless-stopped
+    command: redis-server --bind 0.0.0.0
+  firecrawl-rabbitmq:
+    image: rabbitmq:3-management
+    container_name: firecrawl-rabbitmq
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "check_running"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 40s
+  firecrawl-postgres:
+    image: ghcr.io/firecrawl/nuq-postgres:latest
+    container_name: firecrawl-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${FIRECRAWL_POSTGRES_PASSWORD:-firecrawl}
+      POSTGRES_DB: postgres
+    volumes:
+      - firecrawl_pgdata:/var/lib/postgresql/data
+  firecrawl-api:
+    image: ghcr.io/firecrawl/firecrawl:latest
+    container_name: firecrawl-api
+    restart: unless-stopped
+    environment:
+      HOST: "0.0.0.0"
+      PORT: 3002
+      ENV: local
+      REDIS_URL: redis://firecrawl-redis:6379
+      REDIS_RATE_LIMIT_URL: redis://firecrawl-redis:6379
+      PLAYWRIGHT_MICROSERVICE_URL: http://firecrawl-playwright:3000/scrape
+      POSTGRES_HOST: firecrawl-postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${FIRECRAWL_POSTGRES_PASSWORD:-firecrawl}
+      POSTGRES_DB: postgres
+      USE_DB_AUTHENTICATION: "false"
+      NUQ_RABBITMQ_URL: amqp://firecrawl-rabbitmq:5672
+      NUM_WORKERS_PER_QUEUE: 8
+      BULL_AUTH_KEY: ${FIRECRAWL_BULL_AUTH_KEY}
+      TEST_API_KEY: ${FIRECRAWL_TEST_API_KEY}
+    ports:
+      - "3002:3002"
+    depends_on:
+      firecrawl-redis:
+        condition: service_started
+      firecrawl-playwright:
+        condition: service_started
+      firecrawl-rabbitmq:
+        condition: service_healthy
+      firecrawl-postgres:
+        condition: service_started
+  # USE RAG API IMAGE WITH LOCAL EMBEDDINGS SUPPORT
   rag_api:
     image: registry.librechat.ai/danny-avila/librechat-rag-api-dev:latest
   gebra-knowledge-mcp:
@@ -81,6 +148,7 @@ services:
 
 volumes:
   hf_cache:
+  firecrawl_pgdata:
 
 # ---------------------------------------------------
 
