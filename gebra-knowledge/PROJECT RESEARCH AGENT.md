@@ -44,7 +44,8 @@ Short title + 2–3 sentence summary of the goal.
 Numbered list of clear, testable requirements.
 
 **Non-Functional Requirements**  
-Focus on latency, throughput, determinism, memory, power, and coding standards (MISRA C:2012 is mandatory unless stated otherwise).
+Focus on latency, throughput, determinism, memory, power, and coding standards
+(MISRA C:2012 is mandatory unless stated otherwise).
 
 **Hardware Requirements**  
 MCU, sensors, interfaces, clocking, special peripherals.

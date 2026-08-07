@@ -125,7 +125,7 @@ interface:
   multiConvo: true
   agents:
     use: true
-    create: false
+    create: true
     share: false
     public: true
   peoplePicker:
@@ -372,25 +372,22 @@ mcpServers:
   #   serverInstructions: true
   #   startup: true
   #   description: 'General internal knowledge base: policies, procedures, and other internal notes.'
-  fetch:
+  url_data_extract:
     type: stdio
-    command: uvx
+    command: npx
     args:
-      # Pinned below mcp SDK 2.0.0: mcp-server-fetch has no upper bound on its
-      # `mcp` dependency and breaks against 2.0.0's McpError -> MCPError rename.
-      # https://github.com/modelcontextprotocol/servers/issues/4560
-      - '--with'
-      - 'mcp<2.0.0'
-      - mcp-server-fetch
-      # Skip robots.txt checks. Without this, sites whose robots.txt itself
-      # 403s/blocks the fetch tool's user-agent (WAF/CDN behavior, not an
-      # actual robots.txt disallow rule) get treated as fully off-limits.
-      - '--ignore-robots-txt'
+      - '-y'
+      - 'firecrawl-mcp'
+    env:
+      # Reuses the self-hosted Firecrawl stack from docker-compose.override.yml
+      # (same instance the webSearch scraperProvider uses) instead of Firecrawl Cloud.
+      FIRECRAWL_API_URL: '${FIRECRAWL_API_URL}'
+      FIRECRAWL_API_KEY: '${FIRECRAWL_API_KEY}'
     timeout: 30000
     chatMenu: true
     serverInstructions: true
     startup: true
-    description: 'Fetches the raw content of a specific URL directly (converted to markdown). Use this when the user gives you an exact page link, instead of web_search — web_search only finds pages via keyword search and cannot open a URL you already have.'
+    description: 'read specific URLs directly. Use when the user gives an exact page link instead of web_search — web_search only finds pages via keyword search and cannot open a URL you already have.'
 #   everything:
 #     # type: sse # type can optionally be omitted
 #     url: http://localhost:3001/sse
@@ -854,16 +851,16 @@ endpoints:
 
 # Web Search Configuration (optional)
 webSearch:
-  searchProvider: 'searxng'
+  searchProvider: 'tavily'
   searxngInstanceUrl: '${SEARXNG_INSTANCE_URL}'
+  tavilyApiKey: '${TAVILY_API_KEY}'
   # searxngApiKey: "${SEARXNG_API_KEY}"   # optional
-  # Scraper options (pick one):
   scraperProvider: 'firecrawl' # recommended if you self-host Firecrawl
   # scraperProvider: "serper"           # alternative (needs Serper key + free tier)
   firecrawlApiUrl: '${FIRECRAWL_API_URL}' # only if self-hosting Firecrawl
   firecrawlApiKey: '${FIRECRAWL_API_KEY}' # can be a dummy value for local Firecrawl
-  rerankerType: 'none' # fully free – skip paid rerankers
-  safeSearch: 0 # or 1
+  rerankerType: 'none'
+  safeSearch: 0
   scraperTimeout: 10000
 #   # Jina Reranking Configuration
 #   jinaApiKey: '${JINA_API_KEY}'  # Your Jina API key
@@ -875,7 +872,6 @@ webSearch:
 #   searxngInstanceUrl: '${SEARXNG_INSTANCE_URL}'
 #   searxngApiKey: '${SEARXNG_API_KEY}'
 #   # Tavily (search provider and/or scraper)
-#   tavilyApiKey: '${TAVILY_API_KEY}'
 #   # Content scrapers
 #   firecrawlApiKey: '${FIRECRAWL_API_KEY}'
 #   firecrawlApiUrl: '${FIRECRAWL_API_URL}'

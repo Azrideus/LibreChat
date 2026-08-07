@@ -1,4 +1,9 @@
-use_default_settings: true
+use_default_settings:
+  engines:
+    keep_only:
+      - google cse
+      - bing
+      - wikipedia
 
 server:
   secret_key: '244ff3169dd0e2f9394443f91f99101002a1b18c31fa46145970c3e89f8ddcd8'
@@ -10,3 +15,32 @@ search:
   formats:
     - html
     - json
+
+remove_engines:
+  - all
+
+outgoing:
+  # request timeout
+  request_timeout: 30.0
+  proxies:
+    all://:
+      - socks5://147.45.66.117:1082
+      - socks5://67.201.58.190:4145
+      - socks5://47.252.1.180:7302
+      - socks5://39.102.208.189:8008
+      - socks5://184.181.217.206:4145
+      - socks5://47.92.143.92:82
+      - socks5://5.175.217.106:1080
+      - socks5://72.205.0.93:4145
+      - socks5://178.128.53.12:1080
+      - socks5://70.166.167.38:57728
+      - socks5://144.22.165.206:1088
+      - socks5://66.163.119.55:10006
+      - socks5://98.175.31.195:4145
+      - socks5://5.255.113.177:1080
+      - socks5://103.236.134.210:1080
+      - socks5://98.190.239.3:4145
+      - socks5://112.28.149.152:8443
+      - socks5://201.184.165.91:1080
+      - socks5://66.59.197.62:4000
+      - socks5://59.38.113.185:20000

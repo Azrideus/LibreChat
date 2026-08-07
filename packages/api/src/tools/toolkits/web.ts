@@ -7,6 +7,14 @@ Use this tool when the user's request calls for it, whether directly, indirectly
 
 Use the conversation date/time from the dynamic runtime context when recency matters.
 
+**QUERY CONSTRUCTION:**
+Write plain keyword queries. Do NOT combine a keyword phrase with \`OR\` and a \`site:\`/\`filetype:\` operator in the same unparenthesized query (e.g. \`a b c OR site:.tr\`) 
+— most search backends parse this left-to-right as \`(a AND b AND c) OR site:.tr\`, so the \`OR\` branch alone matches every page on that site regardless of the keywords, flooding results with unrelated pages.
+ If you need to restrict to a domain/TLD, 
+ either use \`site:\` alone with no other \`OR\`, 
+ or run it as a separate, single-purpose search rather than folding it into a broader keyword query. 
+ Never use bare \`OR\` to join a keyword clause with a filter operator.
+
 **CITATION FORMAT - UNICODE ESCAPE SEQUENCES ONLY:**
 Use these EXACT escape sequences (copy verbatim): \\ue202 (before each anchor), \\ue200 (group start), \\ue201 (group end), \\ue203 (highlight start), \\ue204 (highlight end)
 

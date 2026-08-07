@@ -37,6 +37,7 @@ services:
       - "8080:8080"
     volumes:
       - ./searxng/settings.yml:/etc/searxng/settings.yml:ro
+      - ./searxng/limiter.toml:/etc/searxng/limiter.toml:ro
     restart: always
   # ---- Self-hosted Firecrawl (used as the webSearch scraperProvider) ----
   # Prebuilt images from the official self-host compose file, renamed to
