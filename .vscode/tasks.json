@@ -1,0 +1,28 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Rebuild Document ingest",
+      "type": "shell",
+      "command": [
+        "docker compose --profile tools build gebra-knowledge-ingest",
+        "docker compose --profile tools run --rm --name gebra-knowledge-ingest gebra-knowledge-ingest"
+      ],
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      }
+    },
+    {
+      "label": "Default Build",
+      "type": "shell",
+      "command": ["docker compose up -d --build"],
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      }
+    }
+  ]
+}
