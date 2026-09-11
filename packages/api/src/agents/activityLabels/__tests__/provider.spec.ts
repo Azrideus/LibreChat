@@ -56,6 +56,39 @@ describe('createProviderLabelEventWiring', () => {
     ).toBeUndefined();
   });
 
+  it('installs its own chat-model-stream handler when the default handler set has none', async () => {
+    // The real browser-chat handler set (getDefaultHandlers in
+    // api/server/controllers/agents/callbacks.js) never registers
+    // on_chat_model_stream — content reaches the client via
+    // on_message_delta/on_run_step_delta instead. This wiring must still
+    // fire in that case, not silently no-op waiting for a handler to wrap.
+    const parts: TMessageContentParts[] = [];
+    const emitLabelEvent = jest.fn(async (_event: TActivityLabelEvent) => undefined);
+    const wiring = createProviderLabelEventWiring({
+      appConfig: appConfig(),
+      endpoint,
+      getContentParts: () => parts,
+      bumpIndexOffset: jest.fn(),
+      rollbackIndexOffset: jest.fn(),
+      emitLabelEvent,
+    });
+    const handlers = wiring?.handlers({
+      [GraphEvents.ON_MESSAGE_DELTA]: { handle: jest.fn() },
+    });
+    const handler = handlers?.[GraphEvents.CHAT_MODEL_STREAM] as EventHandler;
+
+    expect(handler).toBeDefined();
+    await dispatch(
+      handler,
+      providerChunk(0, { type: ContentTypes.ACTIVITY_LABEL, activity_label: 'No prior handler' }),
+    );
+
+    expect(parts).toEqual([
+      { type: ContentTypes.ACTIVITY_LABEL, activity_label: 'No prior handler' },
+    ]);
+    expect(emitLabelEvent).toHaveBeenCalledWith({ index: 0, part: parts[0] });
+  });
+
   it('handles normal content first, allocates a host index, and sanitizes a phase label', async () => {
     const parts: TMessageContentParts[] = [];
     const bumpIndexOffset = jest.fn();

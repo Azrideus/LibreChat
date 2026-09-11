@@ -198,15 +198,24 @@ export function createProviderLabelEventWiring(
 
   return {
     handlers: (handlers) => {
-      const streamHandler = handlers?.[GraphEvents.CHAT_MODEL_STREAM];
-      if (!handlers || !streamHandler) {
+      if (!handlers) {
         return handlers;
       }
+      /**
+       * The default browser-chat handler set has no `on_chat_model_stream`
+       * entry — content reaches the client via `on_message_delta` /
+       * `on_run_step_delta` instead — so this must install its own handler
+       * rather than only wrapping one that may not exist; chaining into an
+       * existing handler (e.g. from a future default) still runs first.
+       */
+      const streamHandler = handlers[GraphEvents.CHAT_MODEL_STREAM];
       return {
         ...handlers,
         [GraphEvents.CHAT_MODEL_STREAM]: {
           handle: async (event, data, metadata, graph) => {
-            const result = await streamHandler.handle(event, data, metadata, graph);
+            const result = streamHandler
+              ? await streamHandler.handle(event, data, metadata, graph)
+              : undefined;
             const providerEvent = parseProviderLabelEvent(data);
             if (providerEvent != null) {
               await apply(providerEvent);

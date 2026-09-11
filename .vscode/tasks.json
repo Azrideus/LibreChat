@@ -17,7 +17,7 @@
     {
       "label": "Default Build",
       "type": "shell",
-      "command": ["docker compose up -d --build"],
+      "command": ["docker compose down", "&& docker compose up -d --build"],
       "problemMatcher": [],
       "presentation": {
         "reveal": "always",
