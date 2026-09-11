@@ -40,3 +40,5 @@ export type {
   CollectedMetadataEntry,
   ResolveActivityLabelModelParams,
 } from './host';
+export { createProviderLabelEventWiring } from './provider';
+export type { ProviderLabelEventWiring } from './provider';

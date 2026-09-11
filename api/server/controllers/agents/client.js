@@ -89,6 +89,7 @@ const {
   collectSteerStampTargets,
   stampSteerPartMedia,
   createActivityLabelWiring,
+  createProviderLabelEventWiring,
   createActivityPhaseWiring,
   createReasoningLabelHostWiring,
   createMCPRuntimeRequestBody,
@@ -1631,6 +1632,48 @@ class AgentClient extends BaseClient {
        *  deadline before any content reshaping can invalidate its index. */
     }
     detachScopeListeners();
+  }
+
+  /**
+   * Opt-in bridge for activity-label events supplied by a custom
+   * OpenAI-compatible provider. Validation, index allocation, and handler
+   * composition live in packages/api; this controller only supplies the
+   * current response and durable stream dependencies.
+   * @param {string | undefined} streamId
+   */
+  buildProviderLabelEventWiring(streamId) {
+    if (!streamId) {
+      return undefined;
+    }
+    return createProviderLabelEventWiring({
+      appConfig: this.options.req?.config,
+      endpoint: this.options.agent?.endpoint,
+      getContentParts: () => this.contentParts,
+      bumpIndexOffset: () => {
+        this.steerOffsetState.offset += 1;
+      },
+      rollbackIndexOffset: () => {
+        this.steerOffsetState.offset -= 1;
+      },
+      emitLabelEvent: (event) =>
+        GenerationJobManager.emitChunk(
+          streamId,
+          {
+            event: ActivityLabelEvents.ON_ACTIVITY_LABEL,
+            data: {
+              ...event,
+              responseMessageId: this.responseMessageId,
+              conversationId: this.conversationId,
+            },
+          },
+          { durable: true, expectedCreatedAt: this.jobCreatedAt },
+        ),
+      onError: (error) =>
+        logger.warn(
+          '[AgentClient] Provider activity-label event could not be persisted',
+          getSafeErrorMetadata(error),
+        ),
+    });
   }
 
   /**
@@ -4826,13 +4869,17 @@ class AgentClient extends BaseClient {
         const activityLabel = this.buildActivityLabelWiring(streamId, abortController.signal);
         const activityPhase = this.buildActivityPhaseWiring(streamId, abortController.signal);
         const reasoningLabel = this.buildReasoningLabelWiring(streamId, abortController.signal);
+        const providerLabelEvents = this.buildProviderLabelEventWiring(streamId);
         const offsetHandlers = createSteerIndexOffsetHandlers(
           this.options.eventHandlers,
           this.steerOffsetState,
         );
+        const providerHandlers = providerLabelEvents?.handlers(offsetHandlers) ?? offsetHandlers;
         const activityHandlers =
-          activityPhase?.handlers(offsetHandlers) ??
-          (activityLabel ? createAssistantPhaseStampingHandlers(offsetHandlers) : offsetHandlers);
+          activityPhase?.handlers(providerHandlers) ??
+          (activityLabel
+            ? createAssistantPhaseStampingHandlers(providerHandlers)
+            : providerHandlers);
         const createRunPromise = createRun({
           agents,
           // Conversation-stable identity for the e2e run hook; a resumed run
@@ -5587,6 +5634,7 @@ class AgentClient extends BaseClient {
         activityPhaseSnapshot,
       );
       const reasoningLabel = this.buildReasoningLabelWiring(streamId, abortController.signal, true);
+      const providerLabelEvents = this.buildProviderLabelEventWiring(streamId);
       const offsetHandlers = createSteerIndexOffsetHandlers(
         createContentIndexOffsetHandlers(
           this.options.eventHandlers,
@@ -5594,9 +5642,10 @@ class AgentClient extends BaseClient {
         ),
         this.steerOffsetState,
       );
+      const providerHandlers = providerLabelEvents?.handlers(offsetHandlers) ?? offsetHandlers;
       const activityHandlers =
-        activityPhase?.handlers(offsetHandlers) ??
-        (activityLabel ? createAssistantPhaseStampingHandlers(offsetHandlers) : offsetHandlers);
+        activityPhase?.handlers(providerHandlers) ??
+        (activityLabel ? createAssistantPhaseStampingHandlers(providerHandlers) : providerHandlers);
       run = await createRun({
         agents,
         conversationId: this.conversationId,

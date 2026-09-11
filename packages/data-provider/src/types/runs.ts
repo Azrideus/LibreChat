@@ -192,6 +192,17 @@ export type TActivityLabelEvent = {
   conversationId?: string;
 };
 
+/**
+ * Label event accepted from an opted-in OpenAI-compatible provider. The
+ * provider-local index identifies a label across reservation/fill updates;
+ * LibreChat replaces it with the allocated message-content index before
+ * publishing the ordinary {@link TActivityLabelEvent}.
+ */
+export type TProviderLabelEvent = {
+  event: ActivityLabelEvents.ON_ACTIVITY_LABEL;
+  data: Omit<TActivityLabelEvent, 'responseMessageId' | 'conversationId'>;
+};
+
 /** A steer message queued server-side but not yet injected into the run. */
 export type TPendingSteer = {
   steerId: string;

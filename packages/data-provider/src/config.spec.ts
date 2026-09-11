@@ -20,6 +20,27 @@ const endpointsConfig: TEndpointsConfig = {
   Gemini: { type: EModelEndpoint.custom, userProvide: false, order: 9999 },
 };
 
+describe('custom provider label events', () => {
+  it('preserves the explicit opt-in on a custom endpoint', () => {
+    const result = configSchema.parse({
+      version: '1.3.5',
+      endpoints: {
+        custom: [
+          {
+            name: 'Turing Agents',
+            apiKey: 'unused',
+            baseURL: 'http://turing-agents:8093/v1',
+            models: { default: ['Turing Agent'] },
+            providerLabelEvents: true,
+          },
+        ],
+      },
+    });
+
+    expect(result.endpoints?.custom?.[0]?.providerLabelEvents).toBe(true);
+  });
+});
+
 describe('scheduled MCP preflight config', () => {
   it('bounds the separate readiness admission pool', () => {
     expect(

@@ -21,7 +21,12 @@ const mockStripActivityLabelParts = jest.fn((payload) =>
 );
 
 const { Providers } = require('@librechat/agents');
-const { Constants, ContentTypes, EModelEndpoint } = require('librechat-data-provider');
+const {
+  Constants,
+  ContentTypes,
+  EModelEndpoint,
+  ActivityLabelEvents,
+} = require('librechat-data-provider');
 const {
   GenerationJobManager,
   createStreamServices,
@@ -33,6 +38,73 @@ const {
 const BaseClient = require('~/app/clients/BaseClient');
 const AgentClient = require('./client');
 const { resolveConfigServers } = require('~/server/services/MCP');
+
+describe('AgentClient provider activity-label bridge', () => {
+  it('adds host message identity and durably emits a validated provider label', async () => {
+    const emitChunk = jest.spyOn(GenerationJobManager, 'emitChunk').mockResolvedValue(undefined);
+    const client = Object.create(AgentClient.prototype);
+    client.options = {
+      agent: { endpoint: 'Turing Agents' },
+      req: {
+        config: {
+          endpoints: {
+            custom: [{ name: 'Turing Agents', providerLabelEvents: true }],
+          },
+        },
+      },
+    };
+    client.contentParts = [];
+    client.steerOffsetState = { offset: 0 };
+    client.responseMessageId = 'response-1';
+    client.conversationId = 'conversation-1';
+    client.jobCreatedAt = 123;
+    const normalStreamHandler = { handle: jest.fn() };
+
+    const handler = client
+      .buildProviderLabelEventWiring('stream-1')
+      .handlers({ on_chat_model_stream: normalStreamHandler }).on_chat_model_stream;
+    await handler.handle('on_chat_model_stream', {
+      chunk: {
+        additional_kwargs: {
+          provider_specific_fields: {
+            librechat_event: {
+              event: ActivityLabelEvents.ON_ACTIVITY_LABEL,
+              data: {
+                index: 8,
+                part: {
+                  type: ContentTypes.ACTIVITY_LABEL,
+                  activity_label: 'Inspected the project',
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    expect(normalStreamHandler.handle).toHaveBeenCalledTimes(1);
+    expect(client.contentParts).toEqual([
+      { type: ContentTypes.ACTIVITY_LABEL, activity_label: 'Inspected the project' },
+    ]);
+    expect(client.steerOffsetState.offset).toBe(1);
+    expect(emitChunk).toHaveBeenCalledWith(
+      'stream-1',
+      {
+        event: ActivityLabelEvents.ON_ACTIVITY_LABEL,
+        data: {
+          index: 0,
+          part: {
+            type: ContentTypes.ACTIVITY_LABEL,
+            activity_label: 'Inspected the project',
+          },
+          responseMessageId: 'response-1',
+          conversationId: 'conversation-1',
+        },
+      },
+      { durable: true, expectedCreatedAt: 123 },
+    );
+  });
+});
 
 describe('AgentClient code approval persistence', () => {
   it('persists a validated mode in agent conversation options', () => {
@@ -8347,6 +8419,7 @@ describe('AgentClient - resumeCompletion content protection', () => {
     buildActivityLabelWiring: jest.fn(() => null),
     buildActivityPhaseWiring: jest.fn(() => null),
     buildReasoningLabelWiring: jest.fn(() => null),
+    buildProviderLabelEventWiring: jest.fn(() => undefined),
     buildSubagentUsageEmitter: jest.fn(),
     buildDetachedSubagentUsageRecorder: jest.fn(),
     handleRunInterrupt: jest.fn().mockResolvedValue(undefined),

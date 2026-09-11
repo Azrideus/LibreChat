@@ -1460,6 +1460,11 @@ export const endpointSchema = baseEndpointSchema.merge(
      * OpenAI-compatible endpoints.
      */
     provider: z.literal(EModelEndpoint.anthropic).optional(),
+    /**
+     * Accept validated LibreChat label events carried by an OpenAI-compatible
+     * provider in `delta.provider_specific_fields.librechat_event`.
+     */
+    providerLabelEvents: z.boolean().optional(),
     headers: z.record(z.string()).optional(),
     addParams: addParamsSchema.optional(),
     dropParams: z.array(z.string()).optional(),

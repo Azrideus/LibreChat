@@ -834,6 +834,11 @@ endpoints:
       # activityPhaseEndpoint: 'anthropic'     # falls back to activity/run endpoint
       # activityPhasePrompt: 'Summarize the completed agent phase...'
       # activityPhaseMaxPerRun: 5               # cost cap per response
+      # OpenAI-compatible custom endpoints can instead provide already-authored
+      # activity/phase labels. This is opt-in and reads the exact on_activity_label
+      # event from delta.provider_specific_fields.librechat_event. Provider indices
+      # identify a label across updates; LibreChat allocates the persisted index.
+      # providerLabelEvents: true
       # Live reasoning labels are also independent. They update one top-level
       # THINK heading in place and never create or shift message content parts.
       # Enabling this sends a bounded snapshot (up to 4,000 characters) of the
