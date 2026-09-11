@@ -622,7 +622,7 @@ export default function InsightsView() {
     [agentItems, selectedAgentIds],
   );
 
-  useDocumentTitle(`${localize('com_insights_title')} | LibreChat`);
+  useDocumentTitle(`${localize('com_insights_title')} | TuringCode`);
 
   useEffect(
     () => () => {

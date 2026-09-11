@@ -39,9 +39,9 @@ function Footer({ className, startupConfig }: FooterProps) {
   const mainContentParts = (
     typeof config?.customFooter === 'string'
       ? config.customFooter
-      : '[LibreChat ' +
+      : '[TuringCode ' +
         Constants.VERSION +
-        '](https://librechat.ai) - ' +
+        '](https://librechat.ai/) - ' +
         localize('com_ui_latest_footer')
   ).split('|');
 
